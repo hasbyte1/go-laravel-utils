@@ -1,7 +1,7 @@
 # go-laravel-utils
 
 A collection of Go packages that replicate the core functionality of key
-[Laravel](https://laravel.com) security utilities — encryption, password
+[Laravel](https://laravel.com) utilities — collections, encryption, password
 hashing, and API/SPA authentication — while remaining completely framework-
 and database-agnostic.
 
@@ -9,7 +9,7 @@ Every package follows the same design philosophy:
 
 - **Interface-first** — depend on the interface, swap the implementation.
 - **DB-agnostic** — bring your own storage; the packages provide the logic.
-- **Laravel-compatible** — wire formats and security defaults match Laravel's.
+- **Laravel-compatible** — wire formats and API surfaces match Laravel's.
 - **No magic** — pure Go with minimal external dependencies.
 
 ---
@@ -18,6 +18,8 @@ Every package follows the same design philosophy:
 
 | Package | Import path | Purpose |
 |---|---|---|
+| [`collections`](#collections) | `github.com/hasbyte1/go-laravel-utils/collections` | Generic, chainable `Collection[T]` type + `Map`, `GroupBy`, `Zip`, etc. |
+| [`arr`](#arr) | `github.com/hasbyte1/go-laravel-utils/arr` | Standalone slice helpers and dot-notation map access |
 | [`encryption`](#encryption) | `github.com/hasbyte1/go-laravel-utils/encryption` | AES-CBC / AES-GCM symmetric encryption with Laravel-compatible payloads |
 | [`hashing`](#hashing) | `github.com/hasbyte1/go-laravel-utils/hashing` | Bcrypt, Argon2i, and Argon2id password hashing with a driver manager |
 | [`sanctum`](#sanctum) | `github.com/hasbyte1/go-laravel-utils/sanctum` | API token and SPA cookie authentication inspired by Laravel Sanctum |
@@ -40,9 +42,281 @@ Every package follows the same design philosophy:
 go get github.com/hasbyte1/go-laravel-utils
 
 # Or install individual packages
+go get github.com/hasbyte1/go-laravel-utils/collections
+go get github.com/hasbyte1/go-laravel-utils/arr
 go get github.com/hasbyte1/go-laravel-utils/encryption
 go get github.com/hasbyte1/go-laravel-utils/hashing
 go get github.com/hasbyte1/go-laravel-utils/sanctum
+```
+
+---
+
+## collections
+
+A generic, immutable-by-default `Collection[T]` type inspired by
+[Laravel's Illuminate/Collections](https://github.com/laravel/framework/tree/12.x/src/Illuminate/Collections).
+
+### Quick start
+
+```go
+import "github.com/hasbyte1/go-laravel-utils/collections"
+
+result := collections.New(1, 2, 3, 4, 5, 6, 7, 8, 9, 10).
+    Filter(func(n, _ int) bool { return n%2 == 0 }).
+    SortByDesc(func(n int) float64 { return float64(n) }).
+    Take(3).
+    Implode(", ", strconv.Itoa) // → "10, 8, 6"
+```
+
+### Immutability
+
+Every method returns a **new** `Collection`, leaving the original unchanged. This makes collections safe to share between goroutines and prevents accidental mutation in pipelines.
+
+### Methods on `Collection[T]`
+
+| Method | Description |
+|---|---|
+| `All() / ToSlice()` | Return a copy of the underlying slice |
+| `Count()` | Number of items |
+| `IsEmpty() / IsNotEmpty()` | Emptiness checks |
+| `Get(i) / Has(i)` | Index-based access |
+| `First(fn?) / Last(fn?)` | Get first/last (optionally filtered) |
+| `FirstOrFail(fn) / LastOrFail(fn)` | Like First/Last but returns error |
+| `Contains(fn)` | Predicate search |
+| `Search(fn)` | Returns index or -1 |
+| `Filter(fn) / Reject(fn) / Where / WhereNot` | Filtering |
+| `Map(fn)` | Transform items → `Collection[any]` |
+| `FlatMap(fn)` | Map + flatten → `Collection[any]` |
+| `Pluck(fn)` | Extract a field → `Collection[any]` |
+| `Reduce(fn, init)` | Same-type fold |
+| `Unique(fn?)` | Remove duplicates |
+| `Diff(other, fn) / Intersect(other, fn)` | Set operations |
+| `Sort(less) / SortBy(fn) / SortByDesc(fn)` | Sorting |
+| `Reverse()` | Reverse order |
+| `Shuffle() / Random(n)` | Randomisation |
+| `Push(...) / Prepend(...) / Append(...)` | Add items (returns new) |
+| `Pop() / Shift() / Pull(i) / Forget(i)` | Remove items (returns new) |
+| `Concat(other) / Merge(other)` | Concatenation |
+| `Take(n) / Skip(n)` | Pagination (negative n counts from end) |
+| `TakeUntil / TakeWhile / SkipUntil / SkipWhile` | Predicate-based slicing |
+| `Slice(offset, length)` | Sub-slice |
+| `Chunk(size)` | Split into `[][]T` |
+| `Sum / Average / Min / Max` | Numeric aggregation |
+| `GroupBy(fn) / KeyBy(fn)` | Grouping → `map[any]*Collection[T]` |
+| `Partition(fn)` | Split into two collections |
+| `Implode(sep, fn)` | Join to string |
+| `Flip()` | Map value → index |
+| `When / Unless / WhenEmpty / WhenNotEmpty` | Conditional pipeline |
+| `Each(fn) / Tap(fn) / Dump()` | Side-effects |
+| `Keys() / Values()` | Index list / clean copy |
+| `ToJSON()` | JSON serialisation |
+| `Macro(name, args...)` | Call a registered macro |
+
+### Type-transforming package-level functions
+
+Go generics don't allow methods to introduce new type parameters. Use these package-level functions when the output type differs from the input:
+
+```go
+// Map[T, U any]
+doubled := collections.Map(c, func(n, _ int) string { return strconv.Itoa(n*2) })
+
+// FlatMap[T, U any]
+words := collections.FlatMap(sentences, func(s string, _ int) []string {
+    return strings.Fields(s)
+})
+
+// Reduce[T, U any]
+sum := collections.Reduce(c, func(acc int, n, _ int) int { return acc + n }, 0)
+
+// Pluck[T, U any]
+names := collections.Pluck(users, func(u User) string { return u.Name })
+
+// GroupBy[T any, K comparable]
+byDept := collections.GroupBy(employees, func(e Employee) string { return e.Dept })
+
+// KeyBy[T any, K comparable]
+byID := collections.KeyBy(users, func(u User) int { return u.ID })
+
+// Zip[A, B any]
+pairs := collections.Zip(keys, values) // → Collection[Pair[A, B]]
+
+// Combine[K comparable, V any]
+m, _ := collections.Combine([]string{"a", "b"}, []int{1, 2})
+
+// Collapse[T any] / Flatten[T any]
+flat := collections.Collapse(collections.New([]int{1, 2}, []int{3, 4}))
+
+// FlattenDeep
+deep := collections.FlattenDeep(nested) // recursive, Collection[any]
+```
+
+### Macros (runtime extension)
+
+```go
+// Register once (e.g. in init() or application bootstrap).
+collections.RegisterMacro("evens", func(col any, _ ...any) any {
+    c := col.(*collections.Collection[int])
+    return c.Filter(func(n, _ int) bool { return n%2 == 0 })
+})
+
+// Call anywhere.
+result, _ := collections.New(1, 2, 3, 4, 5).Macro("evens")
+// result is *Collection[int]{2, 4}
+```
+
+### Portability
+
+The Collection API maps directly to other languages:
+
+**JavaScript (Node.js):**
+```js
+class Collection {
+    constructor(items) { this._items = [...items]; }
+    filter(fn)  { return new Collection(this._items.filter(fn)); }
+    map(fn)     { return new Collection(this._items.map(fn)); }
+    reduce(fn, initial) { return this._items.reduce(fn, initial); }
+    first(fn)   { return fn ? this._items.find(fn) : this._items[0]; }
+    // ...
+}
+```
+
+**Python:**
+```python
+class Collection:
+    def __init__(self, items): self._items = list(items)
+    def filter(self, fn): return Collection(x for x in self._items if fn(x))
+    def map(self, fn):    return Collection(fn(x) for x in self._items)
+    def reduce(self, fn, initial):
+        from functools import reduce
+        return reduce(fn, self._items, initial)
+    def first(self, fn=None):
+        return next((x for x in self._items if fn(x)), None) if fn else self._items[0]
+    # ...
+```
+
+### Directory structure
+
+```
+collections/
+├── doc.go             # Package godoc
+├── errors.go          # Sentinel errors
+├── pair.go            # Pair[A, B] type (produced by Zip)
+├── enumerable.go      # Enumerable[T] interface
+├── macro.go           # RegisterMacro, HasMacro, CallMacro
+├── collection.go      # Collection[T] type — all single-type methods
+├── funcs.go           # Package-level type-transforming functions
+├── collection_test.go # Unit tests (54 cases)
+├── funcs_test.go      # Unit tests for funcs + macros (16 cases)
+├── bench_test.go      # Benchmarks (10)
+└── example_test.go    # Godoc examples (12)
+```
+
+---
+
+## arr
+
+Standalone, framework-agnostic slice helpers and dot-notation map access
+functions inspired by Laravel's `Arr` facade.
+
+### Slice helpers
+
+```go
+import "github.com/hasbyte1/go-laravel-utils/arr"
+
+evens  := arr.Filter([]int{1,2,3,4,5}, func(n, _ int) bool { return n%2 == 0 })
+chunks := arr.Chunk([]int{1,2,3,4,5}, 2)     // → [[1 2] [3 4] [5]]
+names  := arr.Pluck(users, func(u User) string { return u.Name })
+flat   := arr.Collapse([][]int{{1,2},{3,4}})  // → [1 2 3 4]
+groups := arr.GroupBy(items, func(i Item) string { return i.Category })
+keyed  := arr.KeyBy(users, func(u User) int { return u.ID })
+pairs  := arr.Zip([]string{"a","b"}, []int{1,2})
+unique := arr.Unique([]int{1,2,2,3,3,3})      // → [1 2 3]
+sorted := arr.Sort([]int{3,1,4,1,5}, func(a,b int) bool { return a < b })
+```
+
+### Dot-notation map access
+
+```go
+m := map[string]any{
+    "user": map[string]any{
+        "name": "Alice",
+        "address": map[string]any{"city": "London"},
+    },
+}
+
+arr.Get(m, "user.address.city")          // → "London"
+arr.Get(m, "missing.key", "default")     // → "default"
+arr.Set(m, "user.address.postcode", "EC1")
+arr.Has(m, "user.name")                  // → true
+arr.HasAll(m, "user.name", "user.address.city") // → true
+arr.Forget(m, "user.address.postcode")
+flat := arr.Dot(m)                       // flatten to dot keys
+nested := arr.Undot(flat)                // expand back
+only := arr.Only(m, "user")             // keep subset
+without := arr.Except(m, "user")        // remove keys
+arr.Merge(dst, src)                      // deep merge
+```
+
+### Full function reference
+
+| Function | Signature |
+|---|---|
+| `First` | `[T any]([]T, ...func(T) bool) (T, bool)` |
+| `Last` | `[T any]([]T, ...func(T) bool) (T, bool)` |
+| `Contains` | `[T any]([]T, func(T) bool) bool` |
+| `ContainsValue` | `[T comparable]([]T, T) bool` |
+| `IndexOf` | `[T comparable]([]T, T) int` |
+| `Search` | `[T any]([]T, func(T) bool) int` |
+| `Map` | `[T, U any]([]T, func(T, int) U) []U` |
+| `Filter` | `[T any]([]T, func(T, int) bool) []T` |
+| `Reject` | `[T any]([]T, func(T, int) bool) []T` |
+| `Reduce` | `[T, U any]([]T, func(U, T, int) U, U) U` |
+| `FlatMap` | `[T, U any]([]T, func(T, int) []U) []U` |
+| `Pluck` | `[T, U any]([]T, func(T) U) []U` |
+| `Unique` | `[T comparable]([]T) []T` |
+| `UniqueBy` | `[T any, K comparable]([]T, func(T) K) []T` |
+| `Diff` | `[T comparable]([]T, []T) []T` |
+| `Intersect` | `[T comparable]([]T, []T) []T` |
+| `Chunk` | `[T any]([]T, int) [][]T` |
+| `Collapse` | `[T any]([][]T) []T` |
+| `Flatten` | `(any) []any` |
+| `Reverse` | `[T any]([]T) []T` |
+| `Prepend` | `[T any]([]T, ...T) []T` |
+| `Wrap` | `[T any](T) []T` |
+| `Partition` | `[T any]([]T, func(T) bool) ([]T, []T)` |
+| `Zip` | `[A, B any]([]A, []B) []Pair[A,B]` |
+| `Combine` | `[K comparable, V any]([]K, []V) (map[K]V, error)` |
+| `GroupBy` | `[T any, K comparable]([]T, func(T) K) map[K][]T` |
+| `KeyBy` | `[T any, K comparable]([]T, func(T) K) map[K]T` |
+| `Sort` | `[T any]([]T, func(T, T) bool) []T` |
+| `Shuffle` | `[T any]([]T) []T` |
+| `Random` | `[T any]([]T, int) []T` |
+| `Sum` | `[T any]([]T, func(T) float64) float64` |
+| `Min` | `[T any]([]T, func(T) float64) (T, bool)` |
+| `Max` | `[T any]([]T, func(T) float64) (T, bool)` |
+| `Dot` | `(map[string]any) map[string]any` |
+| `Undot` | `(map[string]any) map[string]any` |
+| `Get` | `(map[string]any, string, ...any) any` |
+| `Set` | `(map[string]any, string, any)` |
+| `Has` | `(map[string]any, string) bool` |
+| `HasAll` | `(map[string]any, ...string) bool` |
+| `HasAny` | `(map[string]any, ...string) bool` |
+| `Forget` | `(map[string]any, string)` |
+| `Only` | `(map[string]any, ...string) map[string]any` |
+| `Except` | `(map[string]any, ...string) map[string]any` |
+| `Merge` | `(dst, src map[string]any) map[string]any` |
+
+### Directory structure
+
+```
+arr/
+├── doc.go       # Package godoc
+├── errors.go    # Internal sentinel error
+├── arr.go       # Generic slice helpers
+├── dot.go       # Dot-notation map functions
+├── arr_test.go  # Slice helper tests (43 cases)
+├── dot_test.go  # Dot notation tests (17 cases)
+└── example_test.go
 ```
 
 ---
@@ -666,11 +940,14 @@ of the token to prevent external mutation of stored state.
 go test -race ./...
 
 # Individual packages
+go test -race ./collections/...
+go test -race ./arr/...
 go test -race ./encryption/...
 go test -race ./hashing/...
 go test -race ./sanctum/...
 
 # Benchmarks
+go test -bench=. -benchmem ./collections/
 go test -bench=. -benchmem ./encryption/
 go test -bench=. -benchmem ./hashing/
 
@@ -685,11 +962,13 @@ go test -fuzz=FuzzGCMDecrypt ./encryption/
 
 | Package | Tests |
 |---|---|
+| `collections` | 70 |
+| `arr` | 60 |
 | `encryption` | 72 |
 | `hashing` | 80 |
 | `sanctum` | 66 |
 | `sanctum/inmemory` | 18 |
-| **Total** | **236** |
+| **Total** | **366** |
 
 ---
 
