@@ -61,6 +61,10 @@ type Token struct {
 	// Applications with multiple roles can use this to store the active role information.
 	// This can be a JSON string containing role details or any other text information.
 	ActiveRole string
+
+	// SwitchToUserID is the ID of the user to switch to, allowing an admin or authorized
+	// user to authenticate as if they were another user. Empty string means no switch is active.
+	SwitchToUserID string
 }
 
 // IsExpired reports whether the token has passed its expiry time.
@@ -94,7 +98,7 @@ type NewTokenResult struct {
 // Token format: {uuid}|{base64url(random bytes)}
 // Only sha256(secret) is stored in Token.Hash.
 // If otp is not nil, the token will require OTP verification before use.
-func generateToken(userID, name string, abilities []string, expiresAt *time.Time, otp *int32, otpType, activeRole string) (*NewTokenResult, error) {
+func generateToken(userID, name string, abilities []string, expiresAt *time.Time, otp *int32, otpType, activeRole, switchToUserID string) (*NewTokenResult, error) {
 	id, err := generateUUID()
 	if err != nil {
 		return nil, fmt.Errorf("sanctum: generate token ID: %w", err)
@@ -119,18 +123,19 @@ func generateToken(userID, name string, abilities []string, expiresAt *time.Time
 
 	return &NewTokenResult{
 		Token: &Token{
-			ID:          id,
-			UserID:      userID,
-			Name:        name,
-			Hash:        hash,
-			Abilities:   abs,
-			CreatedAt:   now,
-			UpdatedAt:   now,
-			ExpiresAt:   expiresAt,
-			OTPHash:     otpHash,
-			OTPAttempts: 0,
-			OTPType:     otpType,
-			ActiveRole:  activeRole,
+			ID:             id,
+			UserID:         userID,
+			Name:           name,
+			Hash:           hash,
+			Abilities:      abs,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			ExpiresAt:      expiresAt,
+			OTPHash:        otpHash,
+			OTPAttempts:    0,
+			OTPType:        otpType,
+			ActiveRole:     activeRole,
+			SwitchToUserID: switchToUserID,
 		},
 		PlainText: plainText,
 	}, nil

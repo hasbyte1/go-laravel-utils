@@ -32,6 +32,10 @@ type CreateTokenOptions struct {
 	// Applications with multiple roles can use this to store the active role information.
 	// This can be a JSON string containing role details or any other text information.
 	ActiveRole string
+
+	// SwitchToUserID is the ID of the user to switch to, allowing an admin or authorized
+	// user to authenticate as if they were another user. Empty string means no switch is active.
+	SwitchToUserID string
 }
 
 // TokenService provides the core token lifecycle operations.
@@ -67,7 +71,7 @@ func (s *TokenService) CreateToken(ctx context.Context, userID string, opts Crea
 		expiresAt = &t
 	}
 
-	result, err := generateToken(userID, opts.Name, abilities, expiresAt, opts.OTP, opts.OTPType, opts.ActiveRole)
+	result, err := generateToken(userID, opts.Name, abilities, expiresAt, opts.OTP, opts.OTPType, opts.ActiveRole, opts.SwitchToUserID)
 	if err != nil {
 		return nil, fmt.Errorf("sanctum: create token: %w", err)
 	}
