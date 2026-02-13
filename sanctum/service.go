@@ -25,17 +25,18 @@ type CreateTokenOptions struct {
 	OTP *int32
 
 	// OTPType identifies the method used to generate the OTP (e.g., "sms", "email", "totp").
-	// Only used if OTP is set.
-	OTPType string
+	// Only used if OTP is set. Nil if not set.
+	OTPType *string
 
 	// ActiveRole is the currently active role for this token (string/JSON).
 	// Applications with multiple roles can use this to store the active role information.
 	// This can be a JSON string containing role details or any other text information.
-	ActiveRole string
+	// Nil if not set.
+	ActiveRole *string
 
 	// SwitchToUserID is the ID of the user to switch to, allowing an admin or authorized
-	// user to authenticate as if they were another user. Empty string means no switch is active.
-	SwitchToUserID string
+	// user to authenticate as if they were another user. Nil if no switch is active.
+	SwitchToUserID *string
 }
 
 // TokenService provides the core token lifecycle operations.
