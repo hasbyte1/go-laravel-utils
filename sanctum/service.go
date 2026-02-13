@@ -27,6 +27,11 @@ type CreateTokenOptions struct {
 	// OTPType identifies the method used to generate the OTP (e.g., "sms", "email", "totp").
 	// Only used if OTP is set.
 	OTPType string
+
+	// ActiveRole is the currently active role for this token (string/JSON).
+	// Applications with multiple roles can use this to store the active role information.
+	// This can be a JSON string containing role details or any other text information.
+	ActiveRole string
 }
 
 // TokenService provides the core token lifecycle operations.
@@ -62,7 +67,7 @@ func (s *TokenService) CreateToken(ctx context.Context, userID string, opts Crea
 		expiresAt = &t
 	}
 
-	result, err := generateToken(userID, opts.Name, abilities, expiresAt, opts.OTP, opts.OTPType)
+	result, err := generateToken(userID, opts.Name, abilities, expiresAt, opts.OTP, opts.OTPType, opts.ActiveRole)
 	if err != nil {
 		return nil, fmt.Errorf("sanctum: create token: %w", err)
 	}
