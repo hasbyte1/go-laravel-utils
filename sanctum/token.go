@@ -10,7 +10,11 @@ import (
 	"time"
 )
 
-const tokenRandomBytes = 40
+const (
+	tokenRandomBytes = 40
+	// MaxOTPAttempts is the maximum number of failed OTP verification attempts allowed.
+	MaxOTPAttempts = 3
+)
 
 // Token represents a personal access token stored in the repository.
 type Token struct {
@@ -42,11 +46,31 @@ type Token struct {
 
 	// ExpiresAt is when the token expires. Nil means the token never expires.
 	ExpiresAt *time.Time
+
+	// OTPHash is the SHA-256 hex digest of the OTP code. Empty string if not set.
+	// Never store the plain-text OTP; only the hash is persisted.
+	OTPHash string
+
+	// OTPAttempts is the number of failed OTP verification attempts.
+	OTPAttempts int8
+
+	// OTPType identifies the method used to generate the OTP (e.g., "sms", "email", "totp").
+	OTPType string
 }
 
 // IsExpired reports whether the token has passed its expiry time.
 func (t *Token) IsExpired() bool {
 	return t.ExpiresAt != nil && time.Now().After(*t.ExpiresAt)
+}
+
+// RequiresOTP reports whether the token requires OTP verification.
+func (t *Token) RequiresOTP() bool {
+	return t.OTPHash != ""
+}
+
+// IsOTPExhausted reports whether the token has exceeded the maximum OTP verification attempts.
+func (t *Token) IsOTPExhausted() bool {
+	return t.OTPAttempts >= MaxOTPAttempts
 }
 
 // NewTokenResult is returned by [TokenService.CreateToken]. It carries both the
@@ -64,7 +88,8 @@ type NewTokenResult struct {
 // generateToken creates a new Token and its plain-text representation.
 // Token format: {uuid}|{base64url(random bytes)}
 // Only sha256(secret) is stored in Token.Hash.
-func generateToken(userID, name string, abilities []string, expiresAt *time.Time) (*NewTokenResult, error) {
+// If otp is not nil, the token will require OTP verification before use.
+func generateToken(userID, name string, abilities []string, expiresAt *time.Time, otp *int32, otpType string) (*NewTokenResult, error) {
 	id, err := generateUUID()
 	if err != nil {
 		return nil, fmt.Errorf("sanctum: generate token ID: %w", err)
@@ -82,16 +107,24 @@ func generateToken(userID, name string, abilities []string, expiresAt *time.Time
 	abs := make([]string, len(abilities))
 	copy(abs, abilities)
 
+	otpHash := ""
+	if otp != nil {
+		otpHash = HashOTP(*otp)
+	}
+
 	return &NewTokenResult{
 		Token: &Token{
-			ID:        id,
-			UserID:    userID,
-			Name:      name,
-			Hash:      hash,
-			Abilities: abs,
-			CreatedAt: now,
-			UpdatedAt: now,
-			ExpiresAt: expiresAt,
+			ID:          id,
+			UserID:      userID,
+			Name:        name,
+			Hash:        hash,
+			Abilities:   abs,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+			ExpiresAt:   expiresAt,
+			OTPHash:     otpHash,
+			OTPAttempts: 0,
+			OTPType:     otpType,
 		},
 		PlainText: plainText,
 	}, nil
@@ -101,6 +134,13 @@ func generateToken(userID, name string, abilities []string, expiresAt *time.Time
 // Pass only the secret portion (after "|"), not the full plain-text token.
 func HashToken(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+// HashOTP returns the SHA-256 hex digest of an OTP code.
+func HashOTP(otp int32) string {
+	s := fmt.Sprintf("%d", otp)
+	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
 

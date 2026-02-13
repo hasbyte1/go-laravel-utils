@@ -48,4 +48,13 @@ var (
 
 	// ErrInvalidCSRFToken is returned when the CSRF cookie is absent or malformed.
 	ErrInvalidCSRFToken = errors.New("sanctum: invalid CSRF token")
+
+	// ErrOTPRequired is returned when a token requires OTP verification but none was provided.
+	ErrOTPRequired = errors.New("sanctum: OTP verification required")
+
+	// ErrInvalidOTP is returned when the provided OTP does not match the stored OTP.
+	ErrInvalidOTP = errors.New("sanctum: invalid OTP")
+
+	// ErrOTPExhausted is returned when the maximum OTP verification attempts have been exceeded.
+	ErrOTPExhausted = errors.New("sanctum: OTP verification attempts exhausted")
 )

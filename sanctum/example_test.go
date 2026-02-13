@@ -216,3 +216,49 @@ func Example_pruneExpired() {
 	// Pruned: 2
 	// Remaining: 1
 }
+
+// Example_otpVerification demonstrates token creation with OTP and verification.
+func Example_otpVerification() {
+	svc := newExampleService()
+	ctx := context.Background()
+
+	// Create a token with OTP requirement (e.g., 123456 sent via SMS)
+	otp := int32(123456)
+	result, err := svc.CreateToken(ctx, "user-123", sanctum.CreateTokenOptions{
+		Name:      "SMS-Protected Token",
+		Abilities: []string{"admin"},
+		OTP:       &otp,
+		OTPType:   "sms",
+	})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Token created with OTP requirement")
+
+	// Try to authenticate without verifying OTP - should fail
+	_, _, err = svc.AuthenticateToken(ctx, result.PlainText)
+	fmt.Println("Auth without OTP:", err) // ErrOTPRequired
+
+	// Verify OTP with wrong code - should fail and increment attempts
+	err = svc.VerifyOTP(ctx, result.Token.ID, 999999)
+	fmt.Println("Wrong OTP:", err) // ErrInvalidOTP
+
+	// Verify with correct OTP
+	err = svc.VerifyOTP(ctx, result.Token.ID, otp)
+	fmt.Println("Correct OTP verification:", err == nil)
+
+	// Now authentication should succeed
+	user, token, err := svc.AuthenticateToken(ctx, result.PlainText)
+	fmt.Println("Auth after OTP:", err == nil)
+	fmt.Println("User:", user.GetID())
+	fmt.Println("Token requires OTP:", token.RequiresOTP())
+
+	// Output:
+	// Token created with OTP requirement
+	// Auth without OTP: sanctum: OTP verification required
+	// Wrong OTP: sanctum: invalid OTP
+	// Correct OTP verification: true
+	// Auth after OTP: true
+	// User: user-123
+	// Token requires OTP: false
+}

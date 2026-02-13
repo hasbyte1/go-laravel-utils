@@ -75,6 +75,18 @@ func (r *Repository) UpdateLastUsedAt(_ context.Context, id string, t time.Time)
 	return nil
 }
 
+// Update persists changes to an existing token.
+func (r *Repository) Update(_ context.Context, token *sanctum.Token) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.tokens[token.ID]; !ok {
+		return sanctum.ErrTokenNotFound
+	}
+	r.tokens[token.ID] = cloneToken(token)
+	return nil
+}
+
 // Revoke removes the token with the given ID. Returns [sanctum.ErrTokenNotFound] when absent.
 func (r *Repository) Revoke(_ context.Context, id string) error {
 	r.mu.Lock()

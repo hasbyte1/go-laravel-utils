@@ -32,6 +32,10 @@ type TokenRepository interface {
 	// UpdateLastUsedAt records the time the token was most recently authenticated.
 	UpdateLastUsedAt(ctx context.Context, id string, t time.Time) error
 
+	// Update persists changes to an existing token.
+	// This is used for updating fields like OTP attempts or OTP status.
+	Update(ctx context.Context, token *Token) error
+
 	// Revoke removes or invalidates the token with the given ID.
 	// Returns [ErrTokenNotFound] if no such token exists.
 	Revoke(ctx context.Context, id string) error
