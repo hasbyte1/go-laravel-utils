@@ -40,7 +40,7 @@ func Example_createAndAuthenticateToken() {
 	fmt.Println("Token created:", result.Token.Name)
 
 	// Authenticate using the plain-text token.
-	user, token, err := svc.AuthenticateToken(ctx, result.PlainText)
+	user, token, err := svc.AuthenticateToken(ctx, result.PlainText, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -66,7 +66,7 @@ func Example_tokenExpiry() {
 		ExpiresAt: &past,
 	})
 
-	_, _, err := svc.AuthenticateToken(ctx, result.PlainText)
+	_, _, err := svc.AuthenticateToken(ctx, result.PlainText, nil)
 	fmt.Println("Error:", err)
 
 	// Output:
@@ -83,7 +83,7 @@ func Example_revokeToken() {
 
 	svc.RevokeToken(ctx, result.Token.ID)
 
-	_, _, err := svc.AuthenticateToken(ctx, result.PlainText)
+	_, _, err := svc.AuthenticateToken(ctx, result.PlainText, nil)
 	fmt.Println("After revoke:", err)
 
 	// Output:
@@ -224,11 +224,12 @@ func Example_otpVerification() {
 
 	// Create a token with OTP requirement (e.g., 123456 sent via SMS)
 	otp := int32(123456)
+	otpType := "sms"
 	result, err := svc.CreateToken(ctx, "user-123", sanctum.CreateTokenOptions{
 		Name:      "SMS-Protected Token",
 		Abilities: []string{"admin"},
 		OTP:       &otp,
-		OTPType:   "sms",
+		OTPType:   &otpType,
 	})
 	if err != nil {
 		panic(err)
@@ -236,7 +237,7 @@ func Example_otpVerification() {
 	fmt.Println("Token created with OTP requirement")
 
 	// Try to authenticate without verifying OTP - should fail
-	_, _, err = svc.AuthenticateToken(ctx, result.PlainText)
+	_, _, err = svc.AuthenticateToken(ctx, result.PlainText, nil)
 	fmt.Println("Auth without OTP:", err) // ErrOTPRequired
 
 	// Verify OTP with wrong code - should fail and increment attempts
@@ -248,7 +249,7 @@ func Example_otpVerification() {
 	fmt.Println("Correct OTP verification:", err == nil)
 
 	// Now authentication should succeed
-	user, token, err := svc.AuthenticateToken(ctx, result.PlainText)
+	user, token, err := svc.AuthenticateToken(ctx, result.PlainText, nil)
 	fmt.Println("Auth after OTP:", err == nil)
 	fmt.Println("User:", user.GetID())
 	fmt.Println("Token requires OTP:", token.RequiresOTP())

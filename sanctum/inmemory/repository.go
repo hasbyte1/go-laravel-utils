@@ -75,6 +75,22 @@ func (r *Repository) UpdateLastUsedAt(_ context.Context, id string, t time.Time)
 	return nil
 }
 
+// UpdateLastUsedAtAndUserIP records the time a token was most recently authenticated
+// and the IP address of the user at that time.
+func (r *Repository) UpdateLastUsedAtAndUserIP(_ context.Context, id string, t time.Time, userIP *string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	tok, ok := r.tokens[id]
+	if !ok {
+		return sanctum.ErrTokenNotFound
+	}
+	tok.LastUsedAt = &t
+	tok.UserIP = userIP
+	tok.UpdatedAt = t
+	return nil
+}
+
 // Update persists changes to an existing token.
 func (r *Repository) Update(_ context.Context, token *sanctum.Token) error {
 	r.mu.Lock()

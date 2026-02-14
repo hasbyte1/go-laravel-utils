@@ -44,6 +44,9 @@ type Token struct {
 	// LastUsedAt is when the token was last authenticated. Nil if never used.
 	LastUsedAt *time.Time
 
+	// UserIP is the IP address of the user when the token was last used. Nil if never used.
+	UserIP *string
+
 	// ExpiresAt is when the token expires. Nil means the token never expires.
 	ExpiresAt *time.Time
 

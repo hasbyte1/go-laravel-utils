@@ -37,7 +37,7 @@ func TestTokenService_CreateAndAuthenticate(t *testing.T) {
 		t.Fatalf("CreateToken: %v", err)
 	}
 
-	user, token, err := svc.AuthenticateToken(ctx, result.PlainText)
+	user, token, err := svc.AuthenticateToken(ctx, result.PlainText, nil)
 	if err != nil {
 		t.Fatalf("AuthenticateToken: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestTokenService_CreateAndAuthenticate(t *testing.T) {
 func TestTokenService_DefaultAbilitiesIsWildcard(t *testing.T) {
 	svc, _ := newTestService(t, "u1")
 	result, _ := svc.CreateToken(context.Background(), "u1", sanctum.CreateTokenOptions{})
-	_, tok, _ := svc.AuthenticateToken(context.Background(), result.PlainText)
+	_, tok, _ := svc.AuthenticateToken(context.Background(), result.PlainText, nil)
 	if len(tok.Abilities) != 1 || tok.Abilities[0] != "*" {
 		t.Errorf("expected wildcard abilities, got %v", tok.Abilities)
 	}
@@ -63,7 +63,7 @@ func TestTokenService_CustomAbilities(t *testing.T) {
 	result, _ := svc.CreateToken(context.Background(), "u1", sanctum.CreateTokenOptions{
 		Abilities: []string{"servers:read", "servers:write"},
 	})
-	_, tok, _ := svc.AuthenticateToken(context.Background(), result.PlainText)
+	_, tok, _ := svc.AuthenticateToken(context.Background(), result.PlainText, nil)
 	if len(tok.Abilities) != 2 {
 		t.Fatalf("expected 2 abilities, got %v", tok.Abilities)
 	}
@@ -79,7 +79,7 @@ func TestTokenService_ExpiredToken(t *testing.T) {
 		ExpiresAt: &past,
 	})
 
-	_, _, err := svc.AuthenticateToken(context.Background(), result.PlainText)
+	_, _, err := svc.AuthenticateToken(context.Background(), result.PlainText, nil)
 	if !errors.Is(err, sanctum.ErrTokenExpired) {
 		t.Errorf("expected ErrTokenExpired, got %v", err)
 	}
@@ -104,7 +104,7 @@ func TestTokenService_DefaultExpiry(t *testing.T) {
 
 func TestTokenService_InvalidToken(t *testing.T) {
 	svc, _ := newTestService(t, "u1")
-	_, _, err := svc.AuthenticateToken(context.Background(), "badtoken")
+	_, _, err := svc.AuthenticateToken(context.Background(), "badtoken", nil)
 	if err == nil {
 		t.Fatal("expected error for non-existent token")
 	}
@@ -116,7 +116,7 @@ func TestTokenService_WrongSecret(t *testing.T) {
 	// Tamper with the secret part.
 	id := result.Token.ID
 	tampered := id + "|wrongsecret"
-	_, _, err := svc.AuthenticateToken(context.Background(), tampered)
+	_, _, err := svc.AuthenticateToken(context.Background(), tampered, nil)
 	if !errors.Is(err, sanctum.ErrInvalidToken) {
 		t.Errorf("expected ErrInvalidToken, got %v", err)
 	}
@@ -130,7 +130,7 @@ func TestTokenService_RevokeToken(t *testing.T) {
 		t.Fatalf("RevokeToken: %v", err)
 	}
 
-	_, _, err := svc.AuthenticateToken(context.Background(), result.PlainText)
+	_, _, err := svc.AuthenticateToken(context.Background(), result.PlainText, nil)
 	if !errors.Is(err, sanctum.ErrTokenNotFound) {
 		t.Errorf("after revoke expected ErrTokenNotFound, got %v", err)
 	}
@@ -148,7 +148,7 @@ func TestTokenService_RevokeAllTokens(t *testing.T) {
 	}
 
 	for _, plain := range []string{r1.PlainText, r2.PlainText} {
-		_, _, err := svc.AuthenticateToken(ctx, plain)
+		_, _, err := svc.AuthenticateToken(ctx, plain, nil)
 		if !errors.Is(err, sanctum.ErrTokenNotFound) {
 			t.Errorf("expected ErrTokenNotFound after RevokeAll, got %v", err)
 		}
@@ -205,11 +205,30 @@ func TestTokenService_AuthenticateUpdatesLastUsedAt(t *testing.T) {
 		t.Error("LastUsedAt should be nil before first use")
 	}
 
-	svc.AuthenticateToken(ctx, result.PlainText)
+	svc.AuthenticateToken(ctx, result.PlainText, nil)
 
 	tok, _ = repo.FindByID(ctx, result.Token.ID)
 	if tok.LastUsedAt == nil {
 		t.Error("LastUsedAt should be set after authentication")
+	}
+}
+
+func TestTokenService_AuthenticateUpdatesUserIP(t *testing.T) {
+	svc, repo := newTestService(t, "u1")
+	ctx := context.Background()
+
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{})
+	tok, _ := repo.FindByID(ctx, result.Token.ID)
+	if tok.UserIP != nil {
+		t.Error("UserIP should be nil before first use")
+	}
+
+	userIP := "192.168.1.100"
+	svc.AuthenticateToken(ctx, result.PlainText, &userIP)
+
+	tok, _ = repo.FindByID(ctx, result.Token.ID)
+	if tok.UserIP == nil || *tok.UserIP != userIP {
+		t.Errorf("UserIP should be set to %q after authentication, got %v", userIP, tok.UserIP)
 	}
 }
 

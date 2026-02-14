@@ -32,6 +32,10 @@ type TokenRepository interface {
 	// UpdateLastUsedAt records the time the token was most recently authenticated.
 	UpdateLastUsedAt(ctx context.Context, id string, t time.Time) error
 
+	// UpdateLastUsedAtAndUserIP records the time the token was most recently authenticated
+	// and the IP address of the user at that time.
+	UpdateLastUsedAtAndUserIP(ctx context.Context, id string, t time.Time, userIP *string) error
+
 	// Update persists changes to an existing token.
 	// This is used for updating fields like OTP attempts or OTP status.
 	Update(ctx context.Context, token *Token) error

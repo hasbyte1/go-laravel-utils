@@ -93,15 +93,16 @@ func (s *TokenService) CreateToken(ctx context.Context, userID string, opts Crea
 //  2. Otherwise fall back to a hash-based lookup (for tokens without an ID prefix).
 //  3. Check token expiry and OTP requirements.
 //
+// The userIP parameter is optional and tracks the IP address of the user at authentication time.
 // Returns [ErrOTPRequired] if the token requires OTP verification before use.
-// LastUsedAt is updated as a best-effort side effect; auth is not failed if the
+// LastUsedAt and UserIP are updated as a best-effort side effect; auth is not failed if the
 // update itself errors.
-func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string) (User, *Token, error) {
+func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string, userIP *string) (User, *Token, error) {
 	id, secret, err := parseTokenID(plainText)
 	if err != nil {
 		// No valid ID prefix — fall back to full-string hash lookup.
 		hash := HashToken(plainText)
-		return s.authenticateByHash(ctx, hash)
+		return s.authenticateByHash(ctx, hash, userIP)
 	}
 
 	token, err := s.repo.FindByID(ctx, id)
@@ -130,11 +131,12 @@ func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string) 
 		return nil, nil, ErrTokenNotFound
 	}
 
-	_ = s.repo.UpdateLastUsedAt(ctx, token.ID, time.Now())
+	now := time.Now()
+	_ = s.repo.UpdateLastUsedAtAndUserIP(ctx, token.ID, now, userIP)
 	return user, token, nil
 }
 
-func (s *TokenService) authenticateByHash(ctx context.Context, hash string) (User, *Token, error) {
+func (s *TokenService) authenticateByHash(ctx context.Context, hash string, userIP *string) (User, *Token, error) {
 	token, err := s.repo.FindByHash(ctx, hash)
 	if err != nil {
 		return nil, nil, err
@@ -157,7 +159,8 @@ func (s *TokenService) authenticateByHash(ctx context.Context, hash string) (Use
 		return nil, nil, ErrTokenNotFound
 	}
 
-	_ = s.repo.UpdateLastUsedAt(ctx, token.ID, time.Now())
+	now := time.Now()
+	_ = s.repo.UpdateLastUsedAtAndUserIP(ctx, token.ID, now, userIP)
 	return user, token, nil
 }
 

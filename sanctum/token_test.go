@@ -7,7 +7,7 @@ import (
 )
 
 func TestGenerateToken_Format(t *testing.T) {
-	result, err := generateToken("user1", "My App", []string{"read"}, nil, nil, "")
+	result, err := generateToken("user1", "My App", []string{"read"}, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("generateToken error: %v", err)
 	}
@@ -25,7 +25,7 @@ func TestGenerateToken_Format(t *testing.T) {
 }
 
 func TestGenerateToken_HashMatchesSecret(t *testing.T) {
-	result, err := generateToken("u1", "test", nil, nil, nil, "")
+	result, err := generateToken("u1", "test", nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestGenerateToken_HashMatchesSecret(t *testing.T) {
 
 func TestGenerateToken_SetsFields(t *testing.T) {
 	exp := time.Now().Add(time.Hour)
-	result, err := generateToken("u42", "tok", []string{"a", "b"}, &exp, nil, "")
+	result, err := generateToken("u42", "tok", []string{"a", "b"}, &exp, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestGenerateToken_SetsFields(t *testing.T) {
 
 func TestGenerateToken_AbilitiesIsolated(t *testing.T) {
 	abs := []string{"read", "write"}
-	result, _ := generateToken("u1", "t", abs, nil, nil, "")
+	result, _ := generateToken("u1", "t", abs, nil, nil, nil, nil, nil)
 	abs[0] = "mutated"
 	if result.Token.Abilities[0] == "mutated" {
 		t.Error("generateToken should copy abilities, not reference the original slice")
@@ -72,7 +72,7 @@ func TestGenerateToken_AbilitiesIsolated(t *testing.T) {
 func TestGenerateToken_Unique(t *testing.T) {
 	seen := make(map[string]bool)
 	for i := 0; i < 20; i++ {
-		r, err := generateToken("u", "n", nil, nil, nil, "")
+		r, err := generateToken("u", "n", nil, nil, nil, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

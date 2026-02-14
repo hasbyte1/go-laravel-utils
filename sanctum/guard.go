@@ -112,7 +112,10 @@ func (g *Guard) Authenticate(r *http.Request) (*AuthContext, error) {
 }
 
 func (g *Guard) authenticateBearer(r *http.Request, plainText string) (*AuthContext, error) {
-	user, token, err := g.service.AuthenticateToken(r.Context(), plainText)
+	// Extract the user's IP address from the request
+	ip := extractIPAddress(r)
+
+	user, token, err := g.service.AuthenticateToken(r.Context(), plainText, ip)
 	if err != nil {
 		g.emit(AuthEvent{Type: EventFailed, Request: r, Err: err})
 		return nil, err
@@ -169,4 +172,39 @@ func extractBearerToken(r *http.Request) string {
 		return auth[len(prefix):]
 	}
 	return ""
+}
+
+// extractIPAddress extracts the client's IP address from the HTTP request.
+// It checks for X-Forwarded-For and X-Real-IP headers (common in proxied environments)
+// before falling back to RemoteAddr. Returns a pointer to the IP address string,
+// or nil if the address cannot be determined.
+func extractIPAddress(r *http.Request) *string {
+	// Check X-Forwarded-For header (comma-separated list of IPs in reverse order)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Get the first IP if multiple are present
+		if idx := strings.Index(xff, ","); idx > 0 {
+			return ptrString(strings.TrimSpace(xff[:idx]))
+		}
+		return ptrString(strings.TrimSpace(xff))
+	}
+
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return ptrString(xri)
+	}
+
+	// Fall back to RemoteAddr (host:port format)
+	if r.RemoteAddr != "" {
+		if idx := strings.LastIndex(r.RemoteAddr, ":"); idx > 0 {
+			return ptrString(r.RemoteAddr[:idx])
+		}
+		return ptrString(r.RemoteAddr)
+	}
+
+	return nil
+}
+
+// ptrString returns a pointer to a string.
+func ptrString(s string) *string {
+	return &s
 }
