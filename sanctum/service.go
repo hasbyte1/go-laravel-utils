@@ -208,7 +208,7 @@ func (s *TokenService) PruneExpired(ctx context.Context) (int64, error) {
 //   - ErrOTPRequired: token requires OTP but none is set (invalid state)
 //   - ErrInvalidOTP: provided OTP does not match stored OTP
 //   - ErrOTPExhausted: maximum OTP verification attempts exceeded (token is revoked)
-func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP int32) error {
+func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP int32, otpAbilities ...string) error {
 	token, err := s.repo.FindByID(ctx, tokenID)
 	if err != nil {
 		return err
@@ -220,6 +220,10 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 
 	if token.IsOTPExhausted() {
 		return ErrOTPExhausted
+	}
+
+	if len(otpAbilities) > 0 && !CanAll(token.Abilities, otpAbilities) {
+		return ErrOTPRequired
 	}
 
 	// Verify the OTP code
