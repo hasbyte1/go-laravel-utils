@@ -199,16 +199,23 @@ func (s *TokenService) PruneExpired(ctx context.Context) (int64, error) {
 }
 
 // VerifyOTP verifies the provided OTP code against the token's stored OTP.
+// If the primary OTP doesn't match and a fallbackOTP is provided, it verifies against that as well.
 // On successful verification, the OTP is cleared from the token.
 // On failed verification, OTPAttempts is incremented, and if max attempts are reached,
 // the token is automatically revoked.
 //
+// Parameters:
+//   - tokenID: The token identifier to verify OTP for
+//   - providedOTP: The primary OTP code provided by the user
+//   - fallbackOTP: Optional fallback OTP code (e.g., from TOTP) to check if primary doesn't match
+//   - otpAbilities: Optional ability requirements for OTP verification
+//
 // Returns errors:
 //   - ErrTokenNotFound: token does not exist
 //   - ErrOTPRequired: token requires OTP but none is set (invalid state)
-//   - ErrInvalidOTP: provided OTP does not match stored OTP
+//   - ErrInvalidOTP: provided OTP does not match stored OTP or fallback OTP
 //   - ErrOTPExhausted: maximum OTP verification attempts exceeded (token is revoked)
-func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP int32, otpAbilities ...string) error {
+func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP int32, fallbackOTP *int32, otpAbilities ...string) error {
 	token, err := s.repo.FindByID(ctx, tokenID)
 	if err != nil {
 		return err
@@ -226,9 +233,17 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 		return ErrOTPRequired
 	}
 
-	// Verify the OTP code
+	// Verify against primary OTP
 	otpHash := HashOTP(providedOTP)
-	if otpHash != token.OTPHash {
+	isValid := otpHash == token.OTPHash
+
+	// Try fallback OTP if primary doesn't match
+	if !isValid && fallbackOTP != nil {
+		fallbackHash := HashOTP(*fallbackOTP)
+		isValid = fallbackHash == otpHash
+	}
+
+	if !isValid {
 		// Increment attempts and check if exhausted
 		token.OTPAttempts++
 		token.UpdatedAt = time.Now()

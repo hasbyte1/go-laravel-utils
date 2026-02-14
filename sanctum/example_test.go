@@ -241,11 +241,11 @@ func Example_otpVerification() {
 	fmt.Println("Auth without OTP:", err) // ErrOTPRequired
 
 	// Verify OTP with wrong code - should fail and increment attempts
-	err = svc.VerifyOTP(ctx, result.Token.ID, 999999)
+	err = svc.VerifyOTP(ctx, result.Token.ID, 999999, nil)
 	fmt.Println("Wrong OTP:", err) // ErrInvalidOTP
 
 	// Verify with correct OTP
-	err = svc.VerifyOTP(ctx, result.Token.ID, otp)
+	err = svc.VerifyOTP(ctx, result.Token.ID, otp, nil)
 	fmt.Println("Correct OTP verification:", err == nil)
 
 	// Now authentication should succeed
