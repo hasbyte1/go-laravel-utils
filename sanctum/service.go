@@ -215,22 +215,22 @@ func (s *TokenService) PruneExpired(ctx context.Context) (int64, error) {
 //   - ErrOTPRequired: token requires OTP but none is set (invalid state)
 //   - ErrInvalidOTP: provided OTP does not match stored OTP or fallback OTP
 //   - ErrOTPExhausted: maximum OTP verification attempts exceeded (token is revoked)
-func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP int32, fallbackOTP *int32, otpAbilities ...string) error {
+func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP int32, fallbackOTP *int32, otpAbilities ...string) (*Token, error) {
 	token, err := s.repo.FindByID(ctx, tokenID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if !token.RequiresOTP() {
-		return ErrOTPRequired
+		return nil, ErrOTPRequired
 	}
 
 	if token.IsOTPExhausted() {
-		return ErrOTPExhausted
+		return nil, ErrOTPExhausted
 	}
 
 	if len(otpAbilities) > 0 && !CanAll(token.Abilities, otpAbilities) {
-		return ErrOTPRequired
+		return nil, ErrOTPRequired
 	}
 
 	// Verify against primary OTP
@@ -249,18 +249,18 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 		token.UpdatedAt = time.Now()
 
 		if err := s.repo.Update(ctx, token); err != nil {
-			return fmt.Errorf("sanctum: update token attempts: %w", err)
+			return nil, fmt.Errorf("sanctum: update token attempts: %w", err)
 		}
 
 		if token.IsOTPExhausted() {
 			// Revoke the token automatically
 			if err := s.repo.Revoke(ctx, tokenID); err != nil {
-				return fmt.Errorf("sanctum: revoke token after exhausted attempts: %w", err)
+				return nil, fmt.Errorf("sanctum: revoke token after exhausted attempts: %w", err)
 			}
-			return ErrOTPExhausted
+			return nil, ErrOTPExhausted
 		}
 
-		return ErrInvalidOTP
+		return nil, ErrInvalidOTP
 	}
 
 	// OTP verified successfully — clear it from the token
@@ -269,10 +269,10 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 	token.UpdatedAt = time.Now()
 
 	if err := s.repo.Update(ctx, token); err != nil {
-		return fmt.Errorf("sanctum: clear OTP: %w", err)
+		return nil, fmt.Errorf("sanctum: clear OTP: %w", err)
 	}
 
-	return nil
+	return token, nil
 }
 
 // InvalidateOTP marks a token's OTP as no longer valid without clearing it.
