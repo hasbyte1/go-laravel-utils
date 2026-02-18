@@ -240,3 +240,58 @@ func TestGuard_BearerTokenCaseInsensitive(t *testing.T) {
 		t.Errorf("bearer (lowercase) should be accepted: %v", err)
 	}
 }
+
+func TestGuard_AuthenticateBearer(t *testing.T) {
+	g, svc := newTestGuard(t, "u1")
+
+	result, _ := svc.CreateToken(context.Background(), "u1", sanctum.CreateTokenOptions{})
+
+	// Test successful authentication
+	ip := "192.168.1.1"
+	ac, err := g.AuthenticateBearer(context.Background(), result.PlainText, &ip)
+	if err != nil {
+		t.Fatalf("AuthenticateBearer: %v", err)
+	}
+	if ac.User.GetID() != "u1" {
+		t.Errorf("user ID = %q, want %q", ac.User.GetID(), "u1")
+	}
+	if ac.Token == nil {
+		t.Error("token should be set")
+	}
+	if ac.IsSessionAuth {
+		t.Error("should not be session auth")
+	}
+}
+
+func TestGuard_AuthenticateBearer_EmptyToken(t *testing.T) {
+	g, _ := newTestGuard(t)
+
+	_, err := g.AuthenticateBearer(context.Background(), "", nil)
+	if !errors.Is(err, sanctum.ErrUnauthorized) {
+		t.Errorf("expected ErrUnauthorized for empty token, got %v", err)
+	}
+}
+
+func TestGuard_AuthenticateBearer_InvalidToken(t *testing.T) {
+	g, _ := newTestGuard(t)
+
+	_, err := g.AuthenticateBearer(context.Background(), "invalid|token", nil)
+	if err == nil {
+		t.Error("expected error for invalid token")
+	}
+}
+
+func TestGuard_AuthenticateBearer_WithoutIP(t *testing.T) {
+	g, svc := newTestGuard(t, "u2")
+
+	result, _ := svc.CreateToken(context.Background(), "u2", sanctum.CreateTokenOptions{})
+
+	// Test without IP address
+	ac, err := g.AuthenticateBearer(context.Background(), result.PlainText, nil)
+	if err != nil {
+		t.Fatalf("AuthenticateBearer without IP: %v", err)
+	}
+	if ac.User.GetID() != "u2" {
+		t.Errorf("user ID = %q, want %q", ac.User.GetID(), "u2")
+	}
+}

@@ -263,3 +263,45 @@ func Example_otpVerification() {
 	// User: user-123
 	// Token requires OTP: false
 }
+
+// Example_authenticateBearerForHumaRouter demonstrates using AuthenticateBearer
+// with huma router or other frameworks where you don't have direct access to http.Request.
+func Example_authenticateBearerForHumaRouter() {
+	svc := newExampleService()
+	csrf := sanctum.NewCSRFService(sanctum.DefaultConfig())
+	guard := sanctum.NewGuard(svc, csrf)
+
+	ctx := context.Background()
+
+	// Create a token
+	result, err := svc.CreateToken(ctx, "user-123", sanctum.CreateTokenOptions{
+		Name:      "API Token",
+		Abilities: []string{"api:read", "api:write"},
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	// Simulate extracting bearer token from huma.Context
+	// In real usage, you would extract this from huma.Context headers
+	bearerToken := result.PlainText
+	clientIP := "192.168.1.100"
+
+	// Authenticate directly using the bearer token string
+	authCtx, err := guard.AuthenticateBearer(ctx, bearerToken, &clientIP)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("Authenticated user:", authCtx.User.GetID())
+	fmt.Println("Token name:", authCtx.Token.Name)
+	fmt.Println("Has api:read:", sanctum.Can(authCtx.Token.Abilities, "api:read"))
+
+	// You can then store the AuthContext in your huma context for use in handlers
+	// ctx = sanctum.WithAuthContext(ctx, authCtx)
+
+	// Output:
+	// Authenticated user: user-123
+	// Token name: API Token
+	// Has api:read: true
+}

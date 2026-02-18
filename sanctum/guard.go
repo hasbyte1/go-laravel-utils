@@ -111,6 +111,70 @@ func (g *Guard) Authenticate(r *http.Request) (*AuthContext, error) {
 	return nil, ErrUnauthorized
 }
 
+// AuthenticateBearer authenticates a bearer token string directly without requiring
+// an HTTP request. This is useful for non-HTTP contexts or custom middleware patterns
+// like huma router where the context doesn't provide direct access to http.Request.
+//
+// Parameters:
+//   - ctx: The context for the request
+//   - bearerToken: The plain-text bearer token string (without "Bearer " prefix)
+//   - ip: Optional IP address of the client for tracking purposes
+//
+// On success it returns a populated [AuthContext]. On failure it returns one of:
+// [ErrUnauthorized], [ErrInvalidToken], [ErrTokenExpired].
+//
+// Note: This method does not run [TokenValidator]s since they require an http.Request.
+// Use the standard [Authenticate] method if you need validator support.
+//
+// Example usage with huma router:
+//
+//	func HumaAuthMiddleware(guard *sanctum.Guard) func(ctx huma.Context, next func(huma.Context)) {
+//		return func(ctx huma.Context, next func(huma.Context)) {
+//			// Extract bearer token from Authorization header
+//			auth := ctx.Header("Authorization")
+//			if auth == "" || !strings.HasPrefix(auth, "Bearer ") {
+//				huma.WriteErr(ctx.API(), ctx.Context(), 401,
+//					"Unauthorized", errors.New("missing bearer token"))
+//				return
+//			}
+//
+//			bearerToken := strings.TrimPrefix(auth, "Bearer ")
+//
+//			// Optional: Extract client IP
+//			ip := ctx.Header("X-Real-IP")
+//			var ipPtr *string
+//			if ip != "" {
+//				ipPtr = &ip
+//			}
+//
+//			// Authenticate using the guard
+//			authCtx, err := guard.AuthenticateBearer(ctx.Context(), bearerToken, ipPtr)
+//			if err != nil {
+//				huma.WriteErr(ctx.API(), ctx.Context(), 401, "Unauthorized", err)
+//				return
+//			}
+//
+//			// Store auth context for use in handlers
+//			ctx.SetContext(sanctum.WithAuthContext(ctx.Context(), authCtx))
+//
+//			// Continue to next handler
+//			next(ctx)
+//		}
+//	}
+func (g *Guard) AuthenticateBearer(ctx context.Context, bearerToken string, ip *string) (*AuthContext, error) {
+	if bearerToken == "" {
+		return nil, ErrUnauthorized
+	}
+
+	user, token, err := g.service.AuthenticateToken(ctx, bearerToken, ip)
+	if err != nil {
+		return nil, err
+	}
+
+	ac := &AuthContext{User: user, Token: token}
+	return ac, nil
+}
+
 func (g *Guard) authenticateBearer(r *http.Request, plainText string) (*AuthContext, error) {
 	// Extract the user's IP address from the request
 	ip := extractIPAddress(r)
