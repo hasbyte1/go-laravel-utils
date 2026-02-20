@@ -3,6 +3,7 @@ package sanctum
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -80,6 +81,10 @@ func (s *TokenService) CreateToken(ctx context.Context, userID string, opts Crea
 	if err := s.repo.Create(ctx, result.Token); err != nil {
 		return nil, fmt.Errorf("sanctum: persist token: %w", err)
 	}
+
+	tokenSplit := strings.Split(result.PlainText, "|")
+	tokenSplit[0] = result.Token.ID
+	result.PlainText = strings.Join(tokenSplit, "|")
 
 	return result, nil
 }
