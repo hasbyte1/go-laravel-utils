@@ -276,7 +276,7 @@ func TestTokenService_IsValidToken_RequiresOTP(t *testing.T) {
 	ctx := context.Background()
 
 	// Create token with OTP requirement
-	otp := int32(123456)
+	otp := "123456"
 	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
 		Name: "otp-token",
 		OTP:  &otp,
@@ -300,7 +300,7 @@ func TestTokenService_IsValidToken_OTPExhausted(t *testing.T) {
 	ctx := context.Background()
 
 	// Create token with OTP
-	otp := int32(123456)
+	otp := "123456"
 	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
 		Name: "otp-token",
 		OTP:  &otp,
@@ -329,7 +329,7 @@ func TestTokenService_IsValidToken_MultipleChecks(t *testing.T) {
 	ctx := context.Background()
 
 	// Create non-expired token with OTP
-	otp := int32(123456)
+	otp := "123456"
 	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
 		Name: "otp-token",
 		OTP:  &otp,

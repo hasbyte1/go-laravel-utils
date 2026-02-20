@@ -223,7 +223,7 @@ func Example_otpVerification() {
 	ctx := context.Background()
 
 	// Create a token with OTP requirement (e.g., 123456 sent via SMS)
-	otp := int32(123456)
+	otp := "123456"
 	otpType := "sms"
 	result, err := svc.CreateToken(ctx, "user-123", sanctum.CreateTokenOptions{
 		Name:      "SMS-Protected Token",
@@ -241,7 +241,7 @@ func Example_otpVerification() {
 	fmt.Println("Auth without OTP:", err) // ErrOTPRequired
 
 	// Verify OTP with wrong code - should fail and increment attempts
-	_, err = svc.VerifyOTP(ctx, result.Token.ID, 999999, nil)
+	_, err = svc.VerifyOTP(ctx, result.Token.ID, "999999", nil)
 	fmt.Println("Wrong OTP:", err) // ErrInvalidOTP
 
 	// Verify with correct OTP

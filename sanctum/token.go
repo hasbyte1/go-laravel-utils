@@ -103,7 +103,7 @@ type NewTokenResult struct {
 // Token format: {uuid}|{base64url(random bytes)}
 // Only sha256(secret) is stored in Token.Hash.
 // If otp is not nil, the token will require OTP verification before use.
-func generateToken(userID, name string, abilities []string, expiresAt *time.Time, otp *int32, otpType *string, activeRole, switchToUserID *string) (*NewTokenResult, error) {
+func generateToken(userID, name string, abilities []string, expiresAt *time.Time, otp *string, otpType *string, activeRole, switchToUserID *string) (*NewTokenResult, error) {
 	id, err := generateUUID()
 	if err != nil {
 		return nil, fmt.Errorf("sanctum: generate token ID: %w", err)
@@ -154,9 +154,8 @@ func HashToken(secret string) string {
 }
 
 // HashOTP returns the SHA-256 hex digest of an OTP code.
-func HashOTP(otp int32) string {
-	s := fmt.Sprintf("%d", otp)
-	sum := sha256.Sum256([]byte(s))
+func HashOTP(otp string) string {
+	sum := sha256.Sum256([]byte(otp))
 	return hex.EncodeToString(sum[:])
 }
 

@@ -23,7 +23,7 @@ type CreateTokenOptions struct {
 
 	// OTP is an optional one-time password code for additional security.
 	// When set, OTP verification is required before the token can be used.
-	OTP *int32
+	OTP *string
 
 	// OTPType identifies the method used to generate the OTP (e.g., "sms", "email", "totp").
 	// Only used if OTP is set. Nil if not set.
@@ -253,7 +253,7 @@ func (s *TokenService) PruneExpired(ctx context.Context) (int64, error) {
 //   - ErrOTPRequired: token requires OTP but none is set (invalid state)
 //   - ErrInvalidOTP: provided OTP does not match stored OTP or fallback OTP
 //   - ErrOTPExhausted: maximum OTP verification attempts exceeded (token is revoked)
-func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP int32, fallbackOTP *int32, otpAbilities ...string) (*Token, error) {
+func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP string, fallbackOTP *string, otpAbilities ...string) (*Token, error) {
 	token, err := s.repo.FindByID(ctx, tokenID)
 	if err != nil {
 		return nil, err
