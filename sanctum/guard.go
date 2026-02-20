@@ -161,12 +161,13 @@ func (g *Guard) Authenticate(r *http.Request) (*AuthContext, error) {
 //			next(ctx)
 //		}
 //	}
-func (g *Guard) AuthenticateBearer(ctx context.Context, bearerToken string, ip *string) (*AuthContext, error) {
+func (g *Guard) AuthenticateBearer(ctx context.Context, bearerToken string, ip *string, checkOTP ...bool) (*AuthContext, error) {
 	if bearerToken == "" {
 		return nil, ErrUnauthorized
 	}
 
-	user, token, err := g.service.AuthenticateToken(ctx, bearerToken, ip)
+	user, token, err := g.service.AuthenticateToken(ctx, bearerToken, ip, checkOTP...)
+
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +176,11 @@ func (g *Guard) AuthenticateBearer(ctx context.Context, bearerToken string, ip *
 	return ac, nil
 }
 
-func (g *Guard) authenticateBearer(r *http.Request, plainText string) (*AuthContext, error) {
+func (g *Guard) authenticateBearer(r *http.Request, plainText string, checkOTP ...bool) (*AuthContext, error) {
 	// Extract the user's IP address from the request
 	ip := extractIPAddress(r)
 
-	user, token, err := g.service.AuthenticateToken(r.Context(), plainText, ip)
+	user, token, err := g.service.AuthenticateToken(r.Context(), plainText, ip, checkOTP...)
 	if err != nil {
 		g.emit(AuthEvent{Type: EventFailed, Request: r, Err: err})
 		return nil, err
