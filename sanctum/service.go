@@ -136,12 +136,14 @@ func (s *TokenService) IsValidToken(token *Token, checkOTP bool, checkOTPExhaust
 // Returns [ErrOTPRequired] if the token requires OTP verification before use.
 // LastUsedAt and UserIP are updated as a best-effort side effect; auth is not failed if the
 // update itself errors.
-func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string, userIP *string) (User, *Token, error) {
+func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string, userIP *string, checkOTP ...bool) (User, *Token, error) {
+	checkOTPFlag := len(checkOTP) == 0 || (len(checkOTP) > 0 && checkOTP[0])
+
 	id, secret, err := parseTokenID(plainText)
 	if err != nil {
 		// No valid ID prefix — fall back to full-string hash lookup.
 		hash := HashToken(plainText)
-		return s.authenticateByHash(ctx, hash, userIP)
+		return s.authenticateByHash(ctx, hash, userIP, checkOTPFlag)
 	}
 
 	token, err := s.repo.FindByID(ctx, id)
@@ -154,7 +156,7 @@ func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string, 
 	}
 
 	// Validate token state (expiry, OTP requirements)
-	if err := s.IsValidToken(token, true, false); err != nil {
+	if err := s.IsValidToken(token, checkOTPFlag, false); err != nil {
 		return nil, nil, err
 	}
 
@@ -171,14 +173,19 @@ func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string, 
 	return user, token, nil
 }
 
-func (s *TokenService) authenticateByHash(ctx context.Context, hash string, userIP *string) (User, *Token, error) {
+func (s *TokenService) authenticateByHash(ctx context.Context, hash string, userIP *string, checkOTP ...bool) (User, *Token, error) {
+	checkOTPFlag := len(checkOTP) == 0 || (len(checkOTP) > 0 && checkOTP[0])
+
 	token, err := s.repo.FindByHash(ctx, hash)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Validate token state (expiry, OTP requirements)
-	if err := s.IsValidToken(token, true, false); err != nil {
+	if err := s.IsValidToken(token, checkOTPFlag, false); err != nil {
+		return nil, nil, err
+	}
+	if err := s.IsValidToken(token, checkOTPFlag, false); err != nil {
 		return nil, nil, err
 	}
 
