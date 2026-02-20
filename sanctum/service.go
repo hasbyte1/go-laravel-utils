@@ -89,6 +89,40 @@ func (s *TokenService) CreateToken(ctx context.Context, userID string, opts Crea
 	return result, nil
 }
 
+// IsValidToken validates a token's state and returns an error if the token is invalid.
+// This function performs common validation checks that can be reused across different
+// authentication and verification flows.
+//
+// Validation checks performed:
+//   - Token expiration check
+//   - OTP requirement check (if checkOTP is true)
+//   - OTP exhaustion check (if checkOTPExhaustion is true)
+//
+// Parameters:
+//   - token: The token to validate
+//   - checkOTP: If true, returns ErrOTPRequired when token requires OTP verification
+//   - checkOTPExhaustion: If true, returns ErrOTPExhausted when max OTP attempts exceeded
+//
+// Returns nil if token is valid, or an appropriate error:
+//   - ErrTokenExpired: token has expired
+//   - ErrOTPRequired: token requires OTP verification (when checkOTP is true)
+//   - ErrOTPExhausted: maximum OTP attempts exceeded (when checkOTPExhaustion is true)
+func (s *TokenService) IsValidToken(token *Token, checkOTP bool, checkOTPExhaustion bool) error {
+	if token.IsExpired() {
+		return ErrTokenExpired
+	}
+
+	if checkOTPExhaustion && token.IsOTPExhausted() {
+		return ErrOTPExhausted
+	}
+
+	if checkOTP && token.RequiresOTP() {
+		return ErrOTPRequired
+	}
+
+	return nil
+}
+
 // AuthenticateToken validates a plain-text Bearer token string and returns the
 // associated [User] and [Token] on success.
 //
@@ -119,13 +153,9 @@ func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string, 
 		return nil, nil, ErrInvalidToken
 	}
 
-	if token.IsExpired() {
-		return nil, nil, ErrTokenExpired
-	}
-
-	// Check if OTP verification is required
-	if token.RequiresOTP() {
-		return nil, nil, ErrOTPRequired
+	// Validate token state (expiry, OTP requirements)
+	if err := s.IsValidToken(token, true, false); err != nil {
+		return nil, nil, err
 	}
 
 	user, err := s.users.FindByID(ctx, token.UserID)
@@ -147,13 +177,9 @@ func (s *TokenService) authenticateByHash(ctx context.Context, hash string, user
 		return nil, nil, err
 	}
 
-	if token.IsExpired() {
-		return nil, nil, ErrTokenExpired
-	}
-
-	// Check if OTP verification is required
-	if token.RequiresOTP() {
-		return nil, nil, ErrOTPRequired
+	// Validate token state (expiry, OTP requirements)
+	if err := s.IsValidToken(token, true, false); err != nil {
+		return nil, nil, err
 	}
 
 	user, err := s.users.FindByID(ctx, token.UserID)
@@ -230,8 +256,9 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 		return nil, ErrOTPRequired
 	}
 
-	if token.IsOTPExhausted() {
-		return nil, ErrOTPExhausted
+	// Validate token state (expiry, OTP exhaustion)
+	if err := s.IsValidToken(token, false, true); err != nil {
+		return nil, err
 	}
 
 	if len(otpAbilities) > 0 && !CanAll(token.Abilities, otpAbilities) {

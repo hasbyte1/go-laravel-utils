@@ -239,3 +239,105 @@ func TestTokenService_RevokeNonExistent(t *testing.T) {
 		t.Error("expected error revoking non-existent token")
 	}
 }
+
+func TestTokenService_IsValidToken_Valid(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{Name: "test"})
+
+	// Token should be valid
+	err := svc.IsValidToken(result.Token, false, false)
+	if err != nil {
+		t.Errorf("expected valid token, got error: %v", err)
+	}
+}
+
+func TestTokenService_IsValidToken_Expired(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token that expires immediately
+	expires := time.Now().Add(-1 * time.Hour)
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name:      "expired",
+		ExpiresAt: &expires,
+	})
+
+	// Token should be invalid due to expiration
+	err := svc.IsValidToken(result.Token, false, false)
+	if !errors.Is(err, sanctum.ErrTokenExpired) {
+		t.Errorf("expected ErrTokenExpired, got %v", err)
+	}
+}
+
+func TestTokenService_IsValidToken_RequiresOTP(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token with OTP requirement
+	otp := int32(123456)
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name: "otp-token",
+		OTP:  &otp,
+	})
+
+	// Token should be invalid when checking OTP requirement
+	err := svc.IsValidToken(result.Token, true, false)
+	if !errors.Is(err, sanctum.ErrOTPRequired) {
+		t.Errorf("expected ErrOTPRequired, got %v", err)
+	}
+
+	// Token should be valid when not checking OTP requirement
+	err = svc.IsValidToken(result.Token, false, false)
+	if err != nil {
+		t.Errorf("expected valid token when not checking OTP, got error: %v", err)
+	}
+}
+
+func TestTokenService_IsValidToken_OTPExhausted(t *testing.T) {
+	svc, repo := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token with OTP
+	otp := int32(123456)
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name: "otp-token",
+		OTP:  &otp,
+	})
+
+	// Manually set OTP attempts to max
+	token := result.Token
+	token.OTPAttempts = 3
+	repo.Update(ctx, token)
+
+	// Token should be invalid when checking OTP exhaustion
+	err := svc.IsValidToken(token, false, true)
+	if !errors.Is(err, sanctum.ErrOTPExhausted) {
+		t.Errorf("expected ErrOTPExhausted, got %v", err)
+	}
+
+	// Token should be valid when not checking OTP exhaustion
+	err = svc.IsValidToken(token, false, false)
+	if err != nil {
+		t.Errorf("expected valid token when not checking OTP exhaustion, got error: %v", err)
+	}
+}
+
+func TestTokenService_IsValidToken_MultipleChecks(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create non-expired token with OTP
+	otp := int32(123456)
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name: "otp-token",
+		OTP:  &otp,
+	})
+
+	// Should fail OTP check first
+	err := svc.IsValidToken(result.Token, true, true)
+	if !errors.Is(err, sanctum.ErrOTPRequired) {
+		t.Errorf("expected ErrOTPRequired when both checks enabled, got %v", err)
+	}
+}
