@@ -240,6 +240,200 @@ func TestTokenService_RevokeNonExistent(t *testing.T) {
 	}
 }
 
+func TestTokenService_VerifyOTP_WithoutOptions(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token with OTP
+	otp := "123456"
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name:      "otp-token",
+		OTP:       &otp,
+		Abilities: []string{"read", "write"},
+	})
+
+	// Verify OTP without options
+	verified, err := svc.VerifyOTP(ctx, result.Token.ID, otp, nil, nil)
+	if err != nil {
+		t.Fatalf("VerifyOTP: %v", err)
+	}
+
+	// Check that OTP was cleared
+	if verified.OTPHash != "" {
+		t.Error("OTPHash should be cleared after verification")
+	}
+	if verified.OTPAttempts != 0 {
+		t.Error("OTPAttempts should be reset to 0")
+	}
+
+	// Check that abilities were not modified
+	if len(verified.Abilities) != 2 || verified.Abilities[0] != "read" || verified.Abilities[1] != "write" {
+		t.Errorf("Abilities should remain unchanged: %v", verified.Abilities)
+	}
+}
+
+func TestTokenService_VerifyOTP_UpdateAbilities(t *testing.T) {
+	svc, repo := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token with OTP and initial abilities
+	otp := "123456"
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name:      "otp-token",
+		OTP:       &otp,
+		Abilities: []string{"read"},
+	})
+
+	// Verify OTP with updated abilities
+	verified, err := svc.VerifyOTP(ctx, result.Token.ID, otp, nil, &sanctum.VerifyOTPOptions{
+		Abilities: []string{"read", "write", "delete"},
+	})
+	if err != nil {
+		t.Fatalf("VerifyOTP: %v", err)
+	}
+
+	// Check that abilities were updated
+	if len(verified.Abilities) != 3 {
+		t.Errorf("Expected 3 abilities, got %d", len(verified.Abilities))
+	}
+	if !sanctum.Can(verified.Abilities, "write") || !sanctum.Can(verified.Abilities, "delete") {
+		t.Error("Token should have write and delete abilities after verification")
+	}
+
+	// Verify persisted
+	persisted, _ := repo.FindByID(ctx, result.Token.ID)
+	if len(persisted.Abilities) != 3 {
+		t.Errorf("Persisted abilities should be updated, got %d", len(persisted.Abilities))
+	}
+}
+
+func TestTokenService_VerifyOTP_UpdateActiveRole(t *testing.T) {
+	svc, repo := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token with OTP
+	otp := "123456"
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name: "otp-token",
+		OTP:  &otp,
+	})
+
+	// Verify OTP with updated active role
+	newRole := `{"id":"admin","permissions":["*"]}`
+	verified, err := svc.VerifyOTP(ctx, result.Token.ID, otp, nil, &sanctum.VerifyOTPOptions{
+		ActiveRole: &newRole,
+	})
+	if err != nil {
+		t.Fatalf("VerifyOTP: %v", err)
+	}
+
+	// Check that active role was updated
+	if verified.ActiveRole == nil || *verified.ActiveRole != newRole {
+		t.Errorf("ActiveRole should be updated to %q, got %v", newRole, verified.ActiveRole)
+	}
+
+	// Verify persisted
+	persisted, _ := repo.FindByID(ctx, result.Token.ID)
+	if persisted.ActiveRole == nil || *persisted.ActiveRole != newRole {
+		t.Errorf("Persisted ActiveRole should be updated, got %v", persisted.ActiveRole)
+	}
+}
+
+func TestTokenService_VerifyOTP_UpdateBothAbilitiesAndRole(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token with OTP and initial state
+	otp := "123456"
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name:      "otp-token",
+		OTP:       &otp,
+		Abilities: []string{"read"},
+	})
+
+	// Verify OTP with both abilities and role updates
+	newAbilities := []string{"read", "write", "admin"}
+	newRole := "manager"
+	verified, err := svc.VerifyOTP(ctx, result.Token.ID, otp, nil, &sanctum.VerifyOTPOptions{
+		Abilities:  newAbilities,
+		ActiveRole: &newRole,
+	})
+	if err != nil {
+		t.Fatalf("VerifyOTP: %v", err)
+	}
+
+	// Check both were updated
+	if len(verified.Abilities) != 3 {
+		t.Errorf("Expected 3 abilities, got %d", len(verified.Abilities))
+	}
+	if verified.ActiveRole == nil || *verified.ActiveRole != newRole {
+		t.Errorf("ActiveRole should be %q, got %v", newRole, verified.ActiveRole)
+	}
+}
+
+func TestTokenService_VerifyOTP_RequiredAbilities(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token with OTP and specific abilities
+	otp := "123456"
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name:      "otp-token",
+		OTP:       &otp,
+		Abilities: []string{"read"},
+	})
+
+	// Try to verify with required ability that token doesn't have
+	verified, err := svc.VerifyOTP(ctx, result.Token.ID, otp, nil, &sanctum.VerifyOTPOptions{
+		RequiredAbilities: []string{"admin"},
+	})
+	if !errors.Is(err, sanctum.ErrOTPRequired) {
+		t.Errorf("expected ErrOTPRequired for missing required ability, got %v", err)
+	}
+	if verified != nil {
+		t.Error("verified should be nil when required ability check fails")
+	}
+
+	// Verify with required ability that token has
+	verified, err = svc.VerifyOTP(ctx, result.Token.ID, otp, nil, &sanctum.VerifyOTPOptions{
+		RequiredAbilities: []string{"read"},
+	})
+	if err != nil {
+		t.Fatalf("VerifyOTP with matching required ability: %v", err)
+	}
+	if verified == nil {
+		t.Error("verified should not be nil when required ability matches")
+	}
+}
+
+func TestTokenService_VerifyOTP_RequiredAbilitiesWithUpdates(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	// Create token with OTP
+	otp := "123456"
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name:      "otp-token",
+		OTP:       &otp,
+		Abilities: []string{"user:read", "user:write"},
+	})
+
+	// Verify with required abilities and update abilities
+	newAbilities := []string{"admin:*"}
+	verified, err := svc.VerifyOTP(ctx, result.Token.ID, otp, nil, &sanctum.VerifyOTPOptions{
+		RequiredAbilities: []string{"user:read"},
+		Abilities:         newAbilities,
+	})
+	if err != nil {
+		t.Fatalf("VerifyOTP: %v", err)
+	}
+
+	// Check abilities were updated despite required check
+	if len(verified.Abilities) != 1 || verified.Abilities[0] != "admin:*" {
+		t.Errorf("Abilities should be updated to admin:*, got %v", verified.Abilities)
+	}
+}
+
 func TestTokenService_IsValidToken_Valid(t *testing.T) {
 	svc, _ := newTestService(t, "u1")
 	ctx := context.Background()

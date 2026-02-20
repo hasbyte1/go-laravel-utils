@@ -241,11 +241,11 @@ func Example_otpVerification() {
 	fmt.Println("Auth without OTP:", err) // ErrOTPRequired
 
 	// Verify OTP with wrong code - should fail and increment attempts
-	_, err = svc.VerifyOTP(ctx, result.Token.ID, "999999", nil)
+	_, err = svc.VerifyOTP(ctx, result.Token.ID, "999999", nil, nil)
 	fmt.Println("Wrong OTP:", err) // ErrInvalidOTP
 
 	// Verify with correct OTP
-	_, err = svc.VerifyOTP(ctx, result.Token.ID, otp, nil)
+	_, err = svc.VerifyOTP(ctx, result.Token.ID, otp, nil, nil)
 	fmt.Println("Correct OTP verification:", err == nil)
 
 	// Now authentication should succeed
@@ -262,6 +262,47 @@ func Example_otpVerification() {
 	// Auth after OTP: true
 	// User: user-123
 	// Token requires OTP: false
+}
+
+// Example_verifyOTPWithFieldUpdates demonstrates updating token abilities and role after OTP verification.
+func Example_verifyOTPWithFieldUpdates() {
+	svc := newExampleService()
+	ctx := context.Background()
+
+	// Create a token with OTP and initial limited abilities
+	otp := "123456"
+	result, err := svc.CreateToken(ctx, "user-123", sanctum.CreateTokenOptions{
+		Name:      "Limited Token",
+		OTP:       &otp,
+		Abilities: []string{"read"},
+	})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("Token created with read ability")
+
+	// After OTP verification, upgrade abilities and set active role
+	upg := []string{"read", "write", "delete"}
+	role := `{"id":"admin","name":"Administrator"}`
+	verified, err := svc.VerifyOTP(ctx, result.Token.ID, otp, nil, &sanctum.VerifyOTPOptions{
+		Abilities:  upg,
+		ActiveRole: &role,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("OTP verified, upgrading permissions")
+	fmt.Println("Token abilities after upgrade:", len(verified.Abilities) > 2)
+	fmt.Println("Token has delete ability:", sanctum.Can(verified.Abilities, "delete"))
+	fmt.Println("Active role set:", verified.ActiveRole != nil && *verified.ActiveRole != "")
+
+	// Output:
+	// Token created with read ability
+	// OTP verified, upgrading permissions
+	// Token abilities after upgrade: true
+	// Token has delete ability: true
+	// Active role set: true
 }
 
 // Example_authenticateBearerForHumaRouter demonstrates using AuthenticateBearer

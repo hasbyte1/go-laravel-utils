@@ -236,9 +236,26 @@ func (s *TokenService) PruneExpired(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
+// VerifyOTPOptions holds optional parameters for OTP verification and token updates.
+type VerifyOTPOptions struct {
+	// Abilities specifies new abilities to assign to the token after successful OTP verification.
+	// If nil or empty, the token's abilities are not modified.
+	Abilities []string
+
+	// ActiveRole specifies a new active role to assign to the token after successful OTP verification.
+	// If nil, the token's active role is not modified.
+	ActiveRole *string
+
+	// RequiredAbilities specifies abilities that the token must have to proceed with OTP verification.
+	// If the token lacks any of these abilities, verification fails with ErrOTPRequired.
+	// This is separate from Abilities which updates the token on success.
+	RequiredAbilities []string
+}
+
 // VerifyOTP verifies the provided OTP code against the token's stored OTP.
 // If the primary OTP doesn't match and a fallbackOTP is provided, it verifies against that as well.
-// On successful verification, the OTP is cleared from the token.
+// On successful verification, the OTP is cleared from the token and optional fields (abilities, active role)
+// can be updated based on the provided [VerifyOTPOptions].
 // On failed verification, OTPAttempts is incremented, and if max attempts are reached,
 // the token is automatically revoked.
 //
@@ -246,14 +263,14 @@ func (s *TokenService) PruneExpired(ctx context.Context) (int64, error) {
 //   - tokenID: The token identifier to verify OTP for
 //   - providedOTP: The primary OTP code provided by the user
 //   - fallbackOTP: Optional fallback OTP code (e.g., from TOTP) to check if primary doesn't match
-//   - otpAbilities: Optional ability requirements for OTP verification
+//   - opts: Optional [VerifyOTPOptions] for ability requirements and field updates on success
 //
 // Returns errors:
 //   - ErrTokenNotFound: token does not exist
 //   - ErrOTPRequired: token requires OTP but none is set (invalid state)
 //   - ErrInvalidOTP: provided OTP does not match stored OTP or fallback OTP
 //   - ErrOTPExhausted: maximum OTP verification attempts exceeded (token is revoked)
-func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP string, fallbackOTP *string, otpAbilities ...string) (*Token, error) {
+func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOTP string, fallbackOTP *string, opts *VerifyOTPOptions) (*Token, error) {
 	token, err := s.repo.FindByID(ctx, tokenID)
 	if err != nil {
 		return nil, err
@@ -268,7 +285,8 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 		return nil, err
 	}
 
-	if len(otpAbilities) > 0 && !CanAll(token.Abilities, otpAbilities) {
+	// Check required abilities if specified in options
+	if opts != nil && len(opts.RequiredAbilities) > 0 && !CanAll(token.Abilities, opts.RequiredAbilities) {
 		return nil, ErrOTPRequired
 	}
 
@@ -306,6 +324,16 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 	token.OTPHash = ""
 	token.OTPAttempts = 0
 	token.UpdatedAt = time.Now()
+
+	// Apply optional field updates if specified
+	if opts != nil {
+		if len(opts.Abilities) > 0 {
+			token.Abilities = opts.Abilities
+		}
+		if opts.ActiveRole != nil {
+			token.ActiveRole = opts.ActiveRole
+		}
+	}
 
 	if err := s.repo.Update(ctx, token); err != nil {
 		return nil, fmt.Errorf("sanctum: clear OTP: %w", err)
