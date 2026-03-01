@@ -141,7 +141,11 @@ func Example_middleware() {
 		sanctum.RequireAbilities("posts:write")(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				ac := sanctum.AuthContextFromRequest(r)
-				fmt.Fprintf(w, "Hello, %s", ac.User.GetID())
+				if user, ok := ac.SanctumUser(); ok {
+					fmt.Fprintf(w, "Hello, %s", user.GetID())
+					return
+				}
+				http.Error(w, "invalid auth user", http.StatusInternalServerError)
 			}),
 		),
 	)
@@ -334,7 +338,11 @@ func Example_authenticateBearerForHumaRouter() {
 		panic(err)
 	}
 
-	fmt.Println("Authenticated user:", authCtx.User.GetID())
+	user, ok := authCtx.SanctumUser()
+	if !ok {
+		panic("invalid auth user")
+	}
+	fmt.Println("Authenticated user:", user.GetID())
 	fmt.Println("Token name:", authCtx.Token.Name)
 	fmt.Println("Has api:read:", sanctum.Can(authCtx.Token.Abilities, "api:read"))
 

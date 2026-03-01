@@ -337,7 +337,13 @@ func myHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    fmt.Println(ac.User.GetID())  // authenticated user ID
+    user, ok := ac.SanctumUser()
+    if !ok {
+        http.Error(w, "invalid auth user", http.StatusInternalServerError)
+        return
+    }
+
+    fmt.Println(user.GetID())  // authenticated user ID
     if ac.Token != nil {
         fmt.Println(ac.Token.Abilities)  // token abilities (nil for session auth)
     }
@@ -349,10 +355,14 @@ func myHandler(w http.ResponseWriter, r *http.Request) {
 
 ```go
 type AuthContext struct {
-    User          User    // always present
+    User          any     // authenticated user payload (typically satisfies sanctum.User)
     Token         *Token  // nil for session-authenticated requests
     IsSessionAuth bool    // true for session-based SPA auth
 }
+
+// Helpers:
+//   ac.SanctumUser()   -> (sanctum.User, bool)
+//   sanctum.UserAs[MyType](ac) -> (MyType, bool)
 ```
 
 ---
@@ -685,7 +695,7 @@ class SanctumAuth:
 | `$user->tokens()->delete()` | `svc.RevokeAllTokens(ctx, userID)` |
 | `$token->delete()` | `svc.RevokeToken(ctx, tokenID)` |
 | `PersonalAccessToken::pruneExpired()` | `svc.PruneExpired(ctx)` |
-| `auth()->user()` in controller | `sanctum.AuthContextFromRequest(r).User` |
+| `auth()->user()` in controller | `ac, _ := sanctum.AuthContextFromRequest(r).SanctumUser()` |
 | `auth()->user()->currentAccessToken()` | `sanctum.AuthContextFromRequest(r).Token` |
 | `auth('sanctum')->check()` | `sanctum.AuthContextFromRequest(r) != nil` |
 | Sanctum middleware `auth:sanctum` | `sanctum.Authenticate(guard)` |

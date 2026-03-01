@@ -62,8 +62,12 @@ func TestAuthenticate_Middleware_AuthContextInjected(t *testing.T) {
 	if capturedAC == nil {
 		t.Fatal("AuthContext was not injected into request context")
 	}
-	if capturedAC.User.GetID() != "u1" {
-		t.Errorf("user ID = %q", capturedAC.User.GetID())
+	user, ok := capturedAC.SanctumUser()
+	if !ok {
+		t.Fatal("expected AuthContext user to satisfy sanctum.User")
+	}
+	if user.GetID() != "u1" {
+		t.Errorf("user ID = %q", user.GetID())
 	}
 }
 

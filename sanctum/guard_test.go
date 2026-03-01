@@ -45,8 +45,12 @@ func TestGuard_BearerTokenAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
-	if ac.User.GetID() != "u1" {
-		t.Errorf("user ID = %q", ac.User.GetID())
+	user, ok := ac.SanctumUser()
+	if !ok {
+		t.Fatal("expected AuthContext user to satisfy sanctum.User")
+	}
+	if user.GetID() != "u1" {
+		t.Errorf("user ID = %q", user.GetID())
 	}
 	if ac.IsSessionAuth {
 		t.Error("should not be session auth")
@@ -93,8 +97,12 @@ func TestGuard_SessionAuth(t *testing.T) {
 	if !ac.IsSessionAuth {
 		t.Error("expected IsSessionAuth = true")
 	}
-	if ac.User.GetID() != "spa-user" {
-		t.Errorf("user ID = %q", ac.User.GetID())
+	user, ok := ac.SanctumUser()
+	if !ok {
+		t.Fatal("expected AuthContext user to satisfy sanctum.User")
+	}
+	if user.GetID() != "spa-user" {
+		t.Errorf("user ID = %q", user.GetID())
 	}
 }
 
@@ -252,8 +260,12 @@ func TestGuard_AuthenticateBearer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthenticateBearer: %v", err)
 	}
-	if ac.User.GetID() != "u1" {
-		t.Errorf("user ID = %q, want %q", ac.User.GetID(), "u1")
+	user, ok := ac.SanctumUser()
+	if !ok {
+		t.Fatal("expected AuthContext user to satisfy sanctum.User")
+	}
+	if user.GetID() != "u1" {
+		t.Errorf("user ID = %q, want %q", user.GetID(), "u1")
 	}
 	if ac.Token == nil {
 		t.Error("token should be set")
@@ -291,7 +303,11 @@ func TestGuard_AuthenticateBearer_WithoutIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthenticateBearer without IP: %v", err)
 	}
-	if ac.User.GetID() != "u2" {
-		t.Errorf("user ID = %q, want %q", ac.User.GetID(), "u2")
+	user, ok := ac.SanctumUser()
+	if !ok {
+		t.Fatal("expected AuthContext user to satisfy sanctum.User")
+	}
+	if user.GetID() != "u2" {
+		t.Errorf("user ID = %q, want %q", user.GetID(), "u2")
 	}
 }
