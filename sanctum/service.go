@@ -250,6 +250,11 @@ type VerifyOTPOptions struct {
 	// If the token lacks any of these abilities, verification fails with ErrOTPRequired.
 	// This is separate from Abilities which updates the token on success.
 	RequiredAbilities []string
+
+	// ExpiresAt sets an explicit expiry time for the token.
+	// When nil, Config.DefaultExpiry is applied; if that is also zero, the token
+	// never expires.
+	ExpiresAt *time.Time
 }
 
 // VerifyOTP verifies the provided OTP code against the token's stored OTP.
@@ -324,6 +329,13 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 	token.OTPHash = ""
 	token.OTPAttempts = 0
 	token.UpdatedAt = time.Now()
+
+	expiresAt := opts.ExpiresAt
+	if expiresAt == nil && s.config.DefaultExpiry > 0 {
+		t := time.Now().Add(s.config.DefaultExpiry)
+		expiresAt = &t
+	}
+	token.ExpiresAt = expiresAt
 
 	// Apply optional field updates if specified
 	if opts != nil {
