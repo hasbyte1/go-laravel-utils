@@ -37,8 +37,7 @@ func New() *Store {
 func (s *Store) AddClient(c *passport.OAuthClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cp := *c
-	s.clients[c.ID] = &cp
+	s.clients[c.ID] = cloneClient(c)
 }
 
 // GetClient implements ClientStore.
@@ -49,8 +48,7 @@ func (s *Store) GetClient(_ context.Context, id string) (*passport.OAuthClient, 
 	if !ok {
 		return nil, passport.ErrClientNotFound
 	}
-	cp := *c
-	return &cp, nil
+	return cloneClient(c), nil
 }
 
 // --- AuthorizationCodeStore ---
@@ -352,6 +350,14 @@ func cloneDevice(d *passport.DeviceCode) *passport.DeviceCode {
 	cp := *d
 	cp.Scopes = cloneStrings(d.Scopes)
 	cp.SessionData = cloneBytes(d.SessionData)
+	return &cp
+}
+
+func cloneClient(c *passport.OAuthClient) *passport.OAuthClient {
+	cp := *c
+	cp.Scopes = cloneStrings(c.Scopes)
+	cp.RedirectURIs = cloneStrings(c.RedirectURIs)
+	cp.GrantTypes = cloneStrings(c.GrantTypes)
 	return &cp
 }
 
