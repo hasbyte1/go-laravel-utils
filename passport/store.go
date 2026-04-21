@@ -12,6 +12,7 @@ type AuthorizationCodeStore interface {
 	// InvalidateAuthorizationCode marks the code as consumed (sets Active=false).
 	// The record must still be returned by GetAuthorizationCode as ErrCodeInvalidated.
 	InvalidateAuthorizationCode(ctx context.Context, code string) error
+	// DeleteAuthorizationCode permanently removes the code record.
 	DeleteAuthorizationCode(ctx context.Context, code string) error
 }
 
