@@ -21,7 +21,7 @@ type Server struct {
 	userInfo  UserInfoProvider
 	users     sanctum.UserProvider
 	devices   DeviceStore
-	publicKey interface{} // *rsa.PublicKey
+	publicKey any // *rsa.PublicKey
 }
 
 // ServerOption is a functional option for Server.
@@ -67,7 +67,7 @@ func NewServer(
 	ad := newAdapter(clients, authCodes, accessToks, refreshToks, devices, users)
 
 	// NewOAuth2JWTStrategy in fosite v0.49 takes a keyGetter func as first arg.
-	keyGetter := func(_ context.Context) (interface{}, error) {
+	keyGetter := func(_ context.Context) (any, error) {
 		return key, nil
 	}
 	hmacStrategy := compose.NewOAuth2HMACStrategy(fositeConfig)

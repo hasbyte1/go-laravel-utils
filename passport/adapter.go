@@ -324,15 +324,6 @@ func (a *adapter) DeleteOpenIDConnectSession(_ context.Context, code string) err
 // methods; these helpers exist for future extensibility.
 // -----------------------------------------------------------------------
 
-// storeDeviceCode is called by Server.HandleDeviceAuthorization after
-// manually building the device-code record (not via fosite compose).
-func (a *adapter) storeDeviceCode(ctx context.Context, dc *DeviceCode) error {
-	a.mu.Lock()
-	a.reqToDevice[dc.RequestID] = dc.DeviceCode
-	a.mu.Unlock()
-	return a.devices.CreateDeviceCode(ctx, dc)
-}
-
 // -----------------------------------------------------------------------
 // fositeClient — implements fosite.Client wrapping *OAuthClient
 // -----------------------------------------------------------------------
