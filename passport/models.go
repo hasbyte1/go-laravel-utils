@@ -11,19 +11,29 @@ const (
 
 // OAuthClient represents a registered OAuth2 client application.
 type OAuthClient struct {
-	ID           string
-	// SecretHash is a bcrypt hash of the client secret. fosite uses bcrypt for
-	// client authentication. Never store the plaintext secret.
-	SecretHash   string
-	Name         string
+	// ID is the OAuth2 client_id, e.g. "my-app". Must be unique across all clients.
+	ID string
+
+	// SecretHash is a bcrypt hash of the client secret.
+	// fosite uses bcrypt for client authentication. Never store the plaintext secret.
+	SecretHash string
+
+	// Name is a human-readable label shown on consent screens.
+	Name string
+
+	// RedirectURIs lists the allowed redirect targets for this client.
 	RedirectURIs []string
-	// GrantTypes lists allowed grant types:
+
+	// GrantTypes lists the grant types this client may use:
 	// "authorization_code", "client_credentials", "refresh_token",
-	// "urn:ietf:params:oauth:grant-type:device_code"
-	GrantTypes   []string
-	Scopes       []string
-	// Public clients (e.g. SPAs, CLIs) have no secret; PKCE is required.
-	Public       bool
+	// "urn:ietf:params:oauth:grant-type:device_code".
+	GrantTypes []string
+
+	// Scopes lists the OAuth2 scopes this client is permitted to request.
+	Scopes []string
+
+	// Public marks clients with no secret (e.g. SPAs, CLIs); PKCE is required for these.
+	Public bool
 }
 
 // AuthorizationCode represents a stored authorization code.
