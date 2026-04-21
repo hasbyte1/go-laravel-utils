@@ -24,11 +24,21 @@ type Config struct {
 	// authorization codes. Generate with crypto/rand and store securely.
 	GlobalSecret []byte
 
-	AccessTokenTTL  time.Duration // default 1 hour
-	RefreshTokenTTL time.Duration // default 30 days
-	AuthCodeTTL     time.Duration // default 10 minutes
-	DeviceCodeTTL   time.Duration // default 5 minutes
-	DeviceInterval  int           // device polling interval in seconds, default 5
+	// AccessTokenTTL is the lifetime of issued access tokens. Defaults to 1 hour.
+	AccessTokenTTL time.Duration
+
+	// RefreshTokenTTL is the lifetime of issued refresh tokens. Defaults to 30 days.
+	RefreshTokenTTL time.Duration
+
+	// AuthCodeTTL is the lifetime of authorization codes. Defaults to 10 minutes.
+	AuthCodeTTL time.Duration
+
+	// DeviceCodeTTL is the lifetime of device authorization codes. Defaults to 5 minutes.
+	DeviceCodeTTL time.Duration
+
+	// DeviceInterval is the minimum polling interval in seconds for the device grant.
+	// Defaults to 5.
+	DeviceInterval int
 }
 
 // DefaultConfig returns a Config with sensible TTL defaults for the given issuer.
