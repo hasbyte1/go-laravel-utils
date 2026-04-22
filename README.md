@@ -24,14 +24,16 @@ Every package follows the same design philosophy:
 | [`hashing`](#hashing) | `github.com/hasbyte1/go-laravel-utils/hashing` | Bcrypt, Argon2i, and Argon2id password hashing with a driver manager |
 | [`sanctum`](#sanctum) | `github.com/hasbyte1/go-laravel-utils/sanctum` | API token and SPA cookie authentication inspired by Laravel Sanctum |
 | [`sanctum/inmemory`](#sanctuminmemory) | `github.com/hasbyte1/go-laravel-utils/sanctum/inmemory` | Thread-safe in-memory reference implementation for `sanctum` interfaces |
+| [`passport`](#passport) | `github.com/hasbyte1/go-laravel-utils/passport` | OAuth2/OIDC authorization server (Authorization Code + PKCE, Client Credentials, Refresh Token) inspired by Laravel Passport |
+| [`passport/inmemory`](#passportinmemory) | `github.com/hasbyte1/go-laravel-utils/passport/inmemory` | Thread-safe in-memory reference implementation for `passport` storage interfaces |
 
 ---
 
 ## Requirements
 
 - Go 1.21 or later
-- External dependency: [`golang.org/x/crypto`](https://pkg.go.dev/golang.org/x/crypto)
-  (used only by the `hashing` package for bcrypt and Argon2)
+- [`golang.org/x/crypto`](https://pkg.go.dev/golang.org/x/crypto) — `hashing` package (bcrypt, Argon2)
+- [`github.com/ory/fosite`](https://github.com/ory/fosite) — `passport` package (pulled in automatically)
 
 ---
 
@@ -47,6 +49,7 @@ go get github.com/hasbyte1/go-laravel-utils/arr
 go get github.com/hasbyte1/go-laravel-utils/encryption
 go get github.com/hasbyte1/go-laravel-utils/hashing
 go get github.com/hasbyte1/go-laravel-utils/sanctum
+go get github.com/hasbyte1/go-laravel-utils/passport
 ```
 
 ---
@@ -933,6 +936,447 @@ of the token to prevent external mutation of stored state.
 
 ---
 
+## passport
+
+An OAuth2/OIDC authorization server for Go, inspired by
+[Laravel Passport](https://laravel.com/docs/passport). It wraps
+[ory/fosite](https://github.com/ory/fosite) internally — consumers never
+import fosite directly.
+
+### Features
+
+| Feature | Detail |
+|---|---|
+| **Grant types** | Authorization Code + PKCE (S256 enforced for public clients), Client Credentials, Refresh Token |
+| **OIDC** | ID tokens (RS256), UserInfo endpoint, discovery document, JWKS endpoint |
+| **DB-agnostic** | Bring your own storage; implement five small interfaces |
+| **ResourceGuard** | Validate JWT access tokens in downstream services — static key or remote JWKS with cache |
+| **PKCE enforcement** | S256 required for public clients; plain method disabled |
+| **Replay protection** | Authorization codes are invalidated after first use; replays trigger token revocation |
+| **fosite hidden** | No fosite types leak into the public API |
+
+### Quick start
+
+```go
+import (
+    "crypto/rand"
+    "crypto/rsa"
+    "github.com/hasbyte1/go-laravel-utils/passport"
+    "github.com/hasbyte1/go-laravel-utils/passport/inmemory"
+)
+
+// 1. Generate (or load from disk) an RSA key pair.
+key, _ := rsa.GenerateKey(rand.Reader, 2048)
+
+// 2. Build your stores (use your own DB implementations; inmemory is for tests).
+store := inmemory.New()
+store.AddClient(&passport.OAuthClient{
+    ID:           "my-app",
+    SecretHash:   "$2a$10$...", // bcrypt hash of the client secret
+    Name:         "My App",
+    RedirectURIs: []string{"https://myapp.example.com/callback"},
+    GrantTypes:   []string{"authorization_code", "refresh_token"},
+    Scopes:       []string{"openid", "profile", "email"},
+    Public:       false,
+})
+
+// 3. Configure the server.
+cfg := passport.DefaultConfig("https://auth.example.com")
+cfg.GlobalSecret = randomBytes32       // 32-byte secret from crypto/rand
+cfg.LoginURL    = "https://auth.example.com/login"
+cfg.ConsentURL  = "https://auth.example.com/consent"
+
+// 4. Construct the server.
+srv, err := passport.NewServer(
+    cfg,
+    store,       // ClientStore
+    store,       // AuthorizationCodeStore
+    store,       // AccessTokenStore
+    store,       // RefreshTokenStore
+    store,       // DeviceStore
+    mySessionProvider,   // UserSessionProvider
+    myConsentProvider,   // ConsentProvider
+    myUserInfoProvider,  // UserInfoProvider
+    myUserProvider,      // sanctum.UserProvider
+    key,
+)
+
+// 5. Mount routes onto your HTTP mux.
+mux := http.NewServeMux()
+srv.RegisterRoutes(mux)
+// Routes registered:
+//   GET  /oauth/authorize
+//   POST /oauth/token
+//   POST /oauth/revoke
+//        /oauth/userinfo          (GET + POST per RFC 9068)
+//   POST /oauth/device/code       (returns 501 — device grant pending fosite update)
+//   GET  /.well-known/openid-configuration
+//   GET  /.well-known/jwks.json
+```
+
+### Configuration
+
+```go
+cfg := passport.DefaultConfig("https://auth.example.com")
+
+// Required before use:
+cfg.GlobalSecret = secret32Bytes   // crypto/rand, 32 bytes min
+cfg.LoginURL    = "..."            // redirect when user is not logged in
+cfg.ConsentURL  = "..."            // redirect when consent is not granted
+
+// Optional overrides (defaults shown):
+cfg.AccessTokenTTL  = time.Hour           // 1 h
+cfg.RefreshTokenTTL = 30 * 24 * time.Hour // 30 days
+cfg.AuthCodeTTL     = 10 * time.Minute    // 10 min
+```
+
+### Implementing the storage interfaces
+
+You must implement five storage interfaces against your own database. Each
+interface is intentionally small.
+
+#### `ClientStore`
+
+```go
+type ClientStore interface {
+    GetClient(ctx context.Context, id string) (*OAuthClient, error)
+    // Return ErrClientNotFound when absent.
+}
+```
+
+#### `AuthorizationCodeStore`
+
+```go
+type AuthorizationCodeStore interface {
+    CreateAuthorizationCode(ctx context.Context, code *AuthorizationCode) error
+    GetAuthorizationCode(ctx context.Context, code string) (*AuthorizationCode, error)
+    // Return ErrCodeNotFound when absent; ErrCodeInvalidated when Active==false.
+    InvalidateAuthorizationCode(ctx context.Context, code string) error
+    // Sets Active=false; record must still be returned as ErrCodeInvalidated.
+    DeleteAuthorizationCode(ctx context.Context, code string) error
+}
+```
+
+#### `AccessTokenStore`
+
+```go
+type AccessTokenStore interface {
+    CreateAccessToken(ctx context.Context, token *AccessToken) error
+    GetAccessToken(ctx context.Context, signature string) (*AccessToken, error)
+    DeleteAccessToken(ctx context.Context, signature string) error
+    DeleteAccessTokensBySubject(ctx context.Context, subject string) error
+    // Caller-facing helper for logout/deletion flows; not called by the server.
+    DeleteAccessTokensByRequestID(ctx context.Context, requestID string) error
+}
+```
+
+#### `RefreshTokenStore`
+
+```go
+type RefreshTokenStore interface {
+    CreateRefreshToken(ctx context.Context, token *RefreshToken) error
+    GetRefreshToken(ctx context.Context, signature string) (*RefreshToken, error)
+    // Return (token, ErrTokenInactive) when Active==false — record must be returned.
+    DeleteRefreshToken(ctx context.Context, signature string) error
+    DeleteRefreshTokensBySubject(ctx context.Context, subject string) error
+    // Caller-facing helper for logout/deletion flows; not called by the server.
+    RevokeRefreshTokensByRequestID(ctx context.Context, requestID string) error
+    // Sets Active=false; called by the server during token rotation.
+}
+```
+
+#### `DeviceStore`
+
+```go
+type DeviceStore interface {
+    CreateDeviceCode(ctx context.Context, req *DeviceCode) error
+    GetDeviceCode(ctx context.Context, deviceCode string) (*DeviceCode, error)
+    GetDeviceCodeByUserCode(ctx context.Context, userCode string) (*DeviceCode, error)
+    UpdateDeviceCode(ctx context.Context, req *DeviceCode) error
+    DeleteDeviceCode(ctx context.Context, deviceCode string) error
+}
+```
+
+#### Example SQL schema
+
+```sql
+CREATE TABLE oauth_clients (
+    id           TEXT PRIMARY KEY,
+    secret_hash  TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,  -- JSON array
+    grant_types  TEXT NOT NULL,   -- JSON array
+    scopes       TEXT NOT NULL,   -- JSON array
+    public       BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE oauth_authorization_codes (
+    code         TEXT PRIMARY KEY,
+    request_id   TEXT NOT NULL,
+    client_id    TEXT NOT NULL,
+    user_id      TEXT NOT NULL,
+    redirect_uri TEXT,
+    scopes       TEXT NOT NULL,   -- JSON array
+    expires_at   TIMESTAMP NOT NULL,
+    active       BOOLEAN NOT NULL DEFAULT TRUE,
+    session_data BLOB NOT NULL,   -- opaque, store and return unchanged
+    nonce        TEXT
+);
+
+CREATE TABLE oauth_access_tokens (
+    signature    TEXT PRIMARY KEY,
+    request_id   TEXT NOT NULL,
+    client_id    TEXT NOT NULL,
+    user_id      TEXT,
+    scopes       TEXT NOT NULL,
+    expires_at   TIMESTAMP NOT NULL,
+    session_data BLOB NOT NULL
+);
+
+CREATE TABLE oauth_refresh_tokens (
+    signature    TEXT PRIMARY KEY,
+    request_id   TEXT NOT NULL,
+    client_id    TEXT NOT NULL,
+    user_id      TEXT,
+    scopes       TEXT NOT NULL,
+    expires_at   TIMESTAMP NOT NULL,
+    active       BOOLEAN NOT NULL DEFAULT TRUE,
+    session_data BLOB NOT NULL
+);
+```
+
+### Implementing the behaviour interfaces
+
+#### `UserSessionProvider`
+
+Resolves the currently authenticated user from an incoming HTTP request.
+Used during the authorization code flow to identify who is approving the request.
+
+```go
+type UserSessionProvider interface {
+    // Return (nil, nil) when no user is authenticated — the server redirects to LoginURL.
+    GetUser(ctx context.Context, r *http.Request) (sanctum.User, error)
+}
+```
+
+#### `ConsentProvider`
+
+Manages user consent records so the consent screen is only shown once per
+client + scope combination.
+
+```go
+type ConsentProvider interface {
+    IsConsentGranted(ctx context.Context, userID, clientID string, scopes []string) (bool, error)
+    SaveConsent(ctx context.Context, userID, clientID string, scopes []string) error
+    RevokeConsent(ctx context.Context, userID, clientID string) error
+}
+```
+
+#### `UserInfoProvider`
+
+Returns OIDC claims for the `/oauth/userinfo` endpoint.
+
+```go
+type UserInfoProvider interface {
+    // scopes is always empty in the current version — look up claims by user ID.
+    GetUserInfo(ctx context.Context, user sanctum.User, scopes []string) (map[string]any, error)
+}
+
+// Example:
+func (p *MyUserInfoProvider) GetUserInfo(_ context.Context, user sanctum.User, _ []string) (map[string]any, error) {
+    u, err := p.db.FindUser(user.GetID())
+    if err != nil {
+        return nil, err
+    }
+    return map[string]any{
+        "name":  u.Name,
+        "email": u.Email,
+    }, nil
+}
+```
+
+### ResourceGuard — protecting downstream services
+
+`ResourceGuard` validates JWT access tokens issued by the authorization server
+in your API services, without needing access to the database.
+
+```go
+import "github.com/hasbyte1/go-laravel-utils/passport"
+
+// Option A: static public key (key loaded from disk or shared memory).
+guard := passport.NewResourceGuard("https://auth.example.com", &rsaKey.PublicKey)
+
+// Option B: remote JWKS (fetched from /.well-known/jwks.json, cached for 1 hour).
+guard := passport.NewRemoteResourceGuard(
+    "https://auth.example.com",
+    "https://auth.example.com/.well-known/jwks.json",
+    passport.WithCacheTTL(30*time.Minute),
+    passport.WithHTTPClient(myClient),
+)
+
+// Use as net/http middleware.
+mux.Handle("/api/data", guard.Middleware(http.HandlerFunc(myHandler)))
+
+// In the handler — read validated claims from context.
+func myHandler(w http.ResponseWriter, r *http.Request) {
+    claims := passport.ClaimsFromContext(r.Context())
+    if !claims.HasScope("data:read") {
+        http.Error(w, "forbidden", http.StatusForbidden)
+        return
+    }
+    fmt.Fprintf(w, "hello %s", claims.Subject)
+}
+
+// Or validate manually without middleware.
+claims, err := guard.Authenticate(r)
+// errors: ErrUnauthorized, ErrInvalidToken, ErrTokenExpired
+```
+
+`TokenClaims` fields:
+
+```go
+type TokenClaims struct {
+    Subject   string
+    ClientID  string
+    Scopes    []string
+    Issuer    string
+    ExpiresAt time.Time
+    Extra     map[string]any // all other JWT claims
+}
+
+claims.HasScope("read", "write") // true only if both scopes are present
+```
+
+### Authorization Code flow (PKCE)
+
+```
+1. Your app redirects the user:
+   GET /oauth/authorize
+       ?response_type=code
+       &client_id=my-app
+       &redirect_uri=https://myapp.example.com/callback
+       &scope=openid+profile
+       &state=<random>
+       &code_challenge=<base64url(sha256(verifier))>
+       &code_challenge_method=S256
+
+2. Server calls UserSessionProvider.GetUser — redirects to LoginURL if nil.
+
+3. Server calls ConsentProvider.IsConsentGranted — redirects to ConsentURL if false.
+   Your consent page calls ConsentProvider.SaveConsent, then redirects back.
+
+4. Server redirects to redirect_uri?code=<code>&state=<state>.
+
+5. Your app exchanges the code:
+   POST /oauth/token
+   Content-Type: application/x-www-form-urlencoded
+
+   grant_type=authorization_code
+   &code=<code>
+   &redirect_uri=https://myapp.example.com/callback
+   &client_id=my-app
+   &code_verifier=<original_verifier>
+
+6. Response:
+   {
+     "access_token":  "<jwt>",
+     "token_type":    "bearer",
+     "expires_in":    3600,
+     "refresh_token": "<opaque>",
+     "id_token":      "<jwt>"
+   }
+```
+
+### Client Credentials flow
+
+```
+POST /oauth/token
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic base64(client_id:client_secret)
+
+grant_type=client_credentials&scope=read
+```
+
+### Refresh Token flow
+
+```
+POST /oauth/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token
+&refresh_token=<token>
+&client_id=my-app
+&client_secret=<secret>
+```
+
+### Device flow
+
+`DeviceStore` is fully implemented and `ApproveDevice` / `DenyDevice` are
+available on `Server`. The HTTP endpoint (`POST /oauth/device/code`) currently
+returns 501 Not Implemented because fosite v0.49 does not ship the
+`RFC8628DeviceAuthorizationGrantFactory`. Upgrade fosite to a version that
+includes RFC 8628 to activate the full flow.
+
+```go
+// Approve/deny from your device verification page handler:
+err := srv.ApproveDevice(ctx, userCode, loggedInUser)
+err := srv.DenyDevice(ctx, userCode)
+```
+
+### Directory structure
+
+```
+passport/
+├── doc.go                   # Package godoc
+├── errors.go                # Sentinel errors
+├── config.go                # Config, DefaultConfig
+├── models.go                # OAuthClient, AuthorizationCode, AccessToken, RefreshToken, DeviceCode
+├── client.go                # ClientStore interface
+├── store.go                 # AuthorizationCodeStore, AccessTokenStore, RefreshTokenStore, DeviceStore
+├── user.go                  # UserSessionProvider, ConsentProvider, UserInfoProvider
+├── server.go                # NewServer, ApproveDevice, DenyDevice
+├── handlers.go              # RegisterRoutes, HandleAuthorize, HandleToken, HandleRevoke, HandleDeviceAuthorization
+├── oidc.go                  # HandleUserInfo, HandleDiscovery, HandleJWKS
+├── resource.go              # ResourceGuard, NewResourceGuard, NewRemoteResourceGuard, TokenClaims, ClaimsFromContext
+├── adapter.go               # internal fosite adapter (not part of public API)
+├── server_test.go           # Integration tests (8 cases)
+├── resource_test.go         # ResourceGuard unit tests (7 cases)
+└── adapter_internal_test.go # Internal adapter regression tests (3 cases)
+```
+
+---
+
+## passport/inmemory
+
+Thread-safe in-memory implementations of all five passport storage interfaces
+plus `UserSessionProvider` and `ConsentProvider`, for use in **tests and
+prototyping**. Do not use in production.
+
+```go
+import "github.com/hasbyte1/go-laravel-utils/passport/inmemory"
+
+store   := inmemory.New()         // implements all five storage interfaces
+sessions := inmemory.NewSessionStore() // UserSessionProvider
+consent  := inmemory.NewConsentStore() // ConsentProvider
+
+// Register a client.
+store.AddClient(&passport.OAuthClient{
+    ID:           "test-client",
+    SecretHash:   "$2a$10$...",
+    GrantTypes:   []string{"authorization_code", "client_credentials"},
+    Scopes:       []string{"openid", "read"},
+    RedirectURIs: []string{"http://localhost/callback"},
+})
+
+// Seed a session so the authorize endpoint sees a logged-in user.
+sessions.Set("session-cookie-value", myUser)
+```
+
+All methods are safe for concurrent use. Every `Get*` call returns a deep copy
+of the stored record so mutations to the returned struct do not corrupt stored state.
+
+---
+
 ## Running tests
 
 ```bash
@@ -945,6 +1389,7 @@ go test -race ./arr/...
 go test -race ./encryption/...
 go test -race ./hashing/...
 go test -race ./sanctum/...
+go test -race ./passport/...
 
 # Benchmarks
 go test -bench=. -benchmem ./collections/
@@ -968,7 +1413,9 @@ go test -fuzz=FuzzGCMDecrypt ./encryption/
 | `hashing` | 80 |
 | `sanctum` | 66 |
 | `sanctum/inmemory` | 18 |
-| **Total** | **366** |
+| `passport` | 17 |
+| `passport/inmemory` | 9 |
+| **Total** | **392** |
 
 ---
 
@@ -1002,6 +1449,19 @@ go test -fuzz=FuzzGCMDecrypt ./encryption/
 - `crypto/rand` is used for all token and CSRF secret generation.
 - CSRF cookies are non-HttpOnly (so JavaScript can read them) but should
   have `Secure: true` in production (HTTPS).
+
+### Passport
+
+- Authorization codes are single-use; replaying an invalidated code triggers
+  revocation of all associated access and refresh tokens (RFC 6749 §10.5).
+- PKCE S256 is enforced for all public clients; the `plain` method is disabled.
+- JWT access tokens are RS256; algorithm confusion attacks (`none`, HMAC
+  downgrade) are blocked in both the server and `ResourceGuard`.
+- `ResourceGuard` pins the algorithm to RS256 before signature verification.
+- Concurrent JWKS refreshes are deduplicated via `singleflight` to prevent
+  thundering-herd cache stampedes.
+- `GlobalSecret` must be at least 32 bytes; `NewServer` fails immediately if
+  shorter.
 
 ---
 
