@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/ory/fosite"
+	"github.com/ory/fosite/handler/oauth2"
+	"github.com/ory/fosite/handler/openid"
+	"github.com/ory/fosite/token/jwt"
 )
 
 // minClientStore always returns ErrClientNotFound — simulates a deleted client.
@@ -113,5 +116,73 @@ func TestFositeClient_GetResponseTypes_clientCredentials(t *testing.T) {
 	got := fc.GetResponseTypes()
 	if len(got) != 0 {
 		t.Fatalf("client_credentials client must have no response types, got %v", got)
+	}
+}
+
+// TestCombinedSession_Clone_preservesExtraClaims verifies that Clone() produces
+// a deep copy of ExtraClaims so mutations to the clone do not affect the original.
+func TestCombinedSession_Clone_preservesExtraClaims(t *testing.T) {
+	orig := &combinedSession{
+		DefaultSession: &openid.DefaultSession{
+			Claims:  &jwt.IDTokenClaims{Subject: "user-42"},
+			Headers: &jwt.Headers{},
+			Subject: "user-42",
+		},
+		ExtraClaims: map[string]any{
+			"role":   "admin",
+			"org_id": "org-1",
+		},
+	}
+
+	cloned := orig.Clone()
+
+	cs, ok := cloned.(*combinedSession)
+	if !ok {
+		t.Fatalf("Clone() must return *combinedSession, got %T", cloned)
+	}
+
+	// ExtraClaims must be copied with the same values.
+	if cs.ExtraClaims["role"] != "admin" {
+		t.Errorf("expected role=admin, got %v", cs.ExtraClaims["role"])
+	}
+	if cs.ExtraClaims["org_id"] != "org-1" {
+		t.Errorf("expected org_id=org-1, got %v", cs.ExtraClaims["org_id"])
+	}
+
+	// Mutating the clone must not affect the original.
+	cs.ExtraClaims["role"] = "viewer"
+	if orig.ExtraClaims["role"] != "admin" {
+		t.Error("Clone() is not a deep copy: mutating clone changed the original ExtraClaims")
+	}
+}
+
+// TestCombinedSession_Clone_implementsJWTSessionContainer verifies that the value
+// returned by Clone() satisfies oauth2.JWTSessionContainer — the contract required
+// by fosite's refresh-token grant to issue JWT access tokens.
+func TestCombinedSession_Clone_implementsJWTSessionContainer(t *testing.T) {
+	orig := &combinedSession{
+		DefaultSession: &openid.DefaultSession{
+			Claims:  &jwt.IDTokenClaims{Subject: "user-1"},
+			Headers: &jwt.Headers{},
+			Subject: "user-1",
+		},
+		ExtraClaims: map[string]any{"k": "v"},
+	}
+
+	cloned := orig.Clone()
+
+	if _, ok := cloned.(oauth2.JWTSessionContainer); !ok {
+		t.Fatalf("Clone() result %T does not implement oauth2.JWTSessionContainer; "+
+			"the refresh-token grant will panic at runtime", cloned)
+	}
+}
+
+// TestCombinedSession_Clone_nilSafe verifies that calling Clone() on a nil
+// *combinedSession returns nil rather than panicking.
+func TestCombinedSession_Clone_nilSafe(t *testing.T) {
+	var s *combinedSession
+	got := s.Clone()
+	if got != nil {
+		t.Fatalf("Clone() on nil must return nil, got %v", got)
 	}
 }

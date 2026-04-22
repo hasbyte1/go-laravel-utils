@@ -362,6 +362,29 @@ func (s *combinedSession) GetJWTHeader() *jwt.Headers {
 	return &jwt.Headers{}
 }
 
+// Clone overrides the promoted openid.DefaultSession.Clone() so that
+// fosite's refresh-token grant receives a *combinedSession (which implements
+// oauth2.JWTSessionContainer) rather than a bare *openid.DefaultSession.
+// Without this override, the refresh flow panics with "Session must be of
+// type JWTSessionContainer".
+func (s *combinedSession) Clone() fosite.Session {
+	if s == nil {
+		return nil
+	}
+	clonedDefault := s.DefaultSession.Clone().(*openid.DefaultSession)
+	cloned := &combinedSession{DefaultSession: clonedDefault}
+	if s.ExtraClaims != nil {
+		cloned.ExtraClaims = make(map[string]any, len(s.ExtraClaims))
+		for k, v := range s.ExtraClaims {
+			cloned.ExtraClaims[k] = v
+		}
+	}
+	return cloned
+}
+
+// compile-time assertion: combinedSession must implement JWTSessionContainer.
+var _ oauth2.JWTSessionContainer = (*combinedSession)(nil)
+
 // -----------------------------------------------------------------------
 // fositeClient — implements fosite.Client wrapping *OAuthClient
 // -----------------------------------------------------------------------
