@@ -335,6 +335,33 @@ func (a *adapter) DeleteOpenIDConnectSession(_ context.Context, code string) err
 // methods; these helpers exist for future extensibility.
 // -----------------------------------------------------------------------
 
+// combinedSession bridges openid.DefaultSession (OIDC/ID-token claims) and
+// oauth2.JWTSessionContainer (JWT access-token claims). Using one type for both
+// HandleAuthorize and HandleToken ensures JSON round-trips correctly across the
+// auth-code exchange without field-name mismatches.
+type combinedSession struct {
+	*openid.DefaultSession
+	ExtraClaims map[string]any `json:"extra_claims,omitempty"`
+}
+
+func (s *combinedSession) GetJWTClaims() jwt.JWTClaimsContainer {
+	extra := make(map[string]any, len(s.ExtraClaims))
+	for k, v := range s.ExtraClaims {
+		extra[k] = v
+	}
+	return &jwt.JWTClaims{
+		Subject: s.GetSubject(),
+		Extra:   extra,
+	}
+}
+
+func (s *combinedSession) GetJWTHeader() *jwt.Headers {
+	if s.DefaultSession != nil && s.DefaultSession.Headers != nil {
+		return s.DefaultSession.Headers
+	}
+	return &jwt.Headers{}
+}
+
 // -----------------------------------------------------------------------
 // fositeClient — implements fosite.Client wrapping *OAuthClient
 // -----------------------------------------------------------------------
@@ -362,18 +389,22 @@ func (fc *fositeClient) GetAudience() fosite.Arguments      { return fosite.Argu
 // session helpers
 // -----------------------------------------------------------------------
 
-func newEmptySession() *openid.DefaultSession {
-	return &openid.DefaultSession{
-		Claims:  &jwt.IDTokenClaims{},
-		Headers: &jwt.Headers{},
+func newEmptySession() *combinedSession {
+	return &combinedSession{
+		DefaultSession: &openid.DefaultSession{
+			Claims:  &jwt.IDTokenClaims{},
+			Headers: &jwt.Headers{},
+		},
 	}
 }
 
-func newSession(subject string) *openid.DefaultSession {
-	return &openid.DefaultSession{
-		Claims:  &jwt.IDTokenClaims{Subject: subject},
-		Headers: &jwt.Headers{},
-		Subject: subject,
+func newSession(subject string) *combinedSession {
+	return &combinedSession{
+		DefaultSession: &openid.DefaultSession{
+			Claims:  &jwt.IDTokenClaims{Subject: subject},
+			Headers: &jwt.Headers{},
+			Subject: subject,
+		},
 	}
 }
 
@@ -428,6 +459,11 @@ func unmarshalRequester(ctx context.Context, data []byte, session fosite.Session
 // (used by the token endpoint). Returns "" for unrecognised session types.
 func sessionSubject(s fosite.Session) string {
 	switch sess := s.(type) {
+	case *combinedSession:
+		if sess.DefaultSession != nil {
+			return sess.Subject
+		}
+		return ""
 	case *openid.DefaultSession:
 		return sess.Subject
 	case *oauth2.JWTSession:

@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/ory/fosite"
-	"github.com/ory/fosite/handler/oauth2"
-	"github.com/ory/fosite/handler/openid"
 )
 
 // RegisterRoutes mounts all handlers onto mux at the default paths.
@@ -67,7 +65,14 @@ func (s *Server) HandleAuthorize() http.Handler {
 		}
 		sess := newSession(user.GetID())
 		sess.Claims.Nonce = r.URL.Query().Get("nonce")
-
+		if s.enricher != nil {
+			extra, enrichErr := s.enricher(ctx, user.GetID())
+			if enrichErr != nil {
+				s.provider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithDebug(enrichErr.Error()))
+				return
+			}
+			sess.ExtraClaims = extra
+		}
 		response, err := s.provider.NewAuthorizeResponse(ctx, ar, sess)
 		if err != nil {
 			s.provider.WriteAuthorizeError(ctx, w, ar, err)
@@ -78,12 +83,12 @@ func (s *Server) HandleAuthorize() http.Handler {
 }
 
 // HandleToken handles POST /oauth/token.
-// The session must implement oauth2.JWTSessionContainer when using a JWT access
-// token strategy. openid.DefaultSession does not satisfy that interface.
+// combinedSession implements both fosite.Session and oauth2.JWTSessionContainer,
+// ensuring extra claims stored during HandleAuthorize are preserved in the JWT.
 func (s *Server) HandleToken() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		sess := &oauth2.JWTSession{}
+		sess := newEmptySession()
 		ar, err := s.provider.NewAccessRequest(ctx, r, sess)
 		if err != nil {
 			s.provider.WriteAccessError(ctx, w, ar, err)
@@ -122,5 +127,4 @@ func (s *Server) HandleDeviceAuthorization() http.Handler {
 // openid.DefaultSession to IntrospectToken when the token is a JWT access token.
 // fosite v0.49 IntrospectToken accepts any fosite.Session; the JWT strategy
 // only requires a JWTSessionContainer on the write path (GenerateJWT), not on
-// introspection, so openid.DefaultSession works here.
-var _ = (*openid.DefaultSession)(nil) // ensure import is used
+// introspection, so combinedSession (which embeds openid.DefaultSession) works here.

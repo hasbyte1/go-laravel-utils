@@ -23,10 +23,18 @@ type Server struct {
 	users     sanctum.UserProvider
 	devices   DeviceStore
 	publicKey any // *rsa.PublicKey
+	enricher  func(ctx context.Context, userID string) (map[string]any, error)
 }
 
 // ServerOption is a functional option for Server.
 type ServerOption func(*Server)
+
+// WithSessionEnricher injects extra JWT claims (e.g. name, is_admin, roles) into
+// the access token during the authorize flow. fn is called with the authenticated
+// user's ID immediately before NewAuthorizeResponse.
+func WithSessionEnricher(fn func(ctx context.Context, userID string) (map[string]any, error)) ServerOption {
+	return func(s *Server) { s.enricher = fn }
+}
 
 // NewServer constructs a Server, wiring all consumer stores into fosite.
 // key must be an *rsa.PrivateKey (RS256).

@@ -34,6 +34,10 @@ type OAuthClient struct {
 
 	// Public marks clients with no secret (e.g. SPAs, CLIs); PKCE is required for these.
 	Public bool
+
+	// FirstParty marks trusted first-party clients (e.g. the main portal).
+	// ConsentProvider uses this to auto-grant consent without showing a consent screen.
+	FirstParty bool
 }
 
 // AuthorizationCode represents a stored authorization code.
