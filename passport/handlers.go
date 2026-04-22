@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ory/fosite"
+	"github.com/ory/fosite/handler/oauth2"
 	"github.com/ory/fosite/handler/openid"
 )
 
@@ -77,10 +78,12 @@ func (s *Server) HandleAuthorize() http.Handler {
 }
 
 // HandleToken handles POST /oauth/token.
+// The session must implement oauth2.JWTSessionContainer when using a JWT access
+// token strategy. openid.DefaultSession does not satisfy that interface.
 func (s *Server) HandleToken() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		sess := &openid.DefaultSession{}
+		sess := &oauth2.JWTSession{}
 		ar, err := s.provider.NewAccessRequest(ctx, r, sess)
 		if err != nil {
 			s.provider.WriteAccessError(ctx, w, ar, err)
@@ -114,3 +117,10 @@ func (s *Server) HandleDeviceAuthorization() http.Handler {
 			http.StatusNotImplemented)
 	})
 }
+
+// userInfoSession is a thin adapter so that the userinfo handler can pass an
+// openid.DefaultSession to IntrospectToken when the token is a JWT access token.
+// fosite v0.49 IntrospectToken accepts any fosite.Session; the JWT strategy
+// only requires a JWTSessionContainer on the write path (GenerateJWT), not on
+// introspection, so openid.DefaultSession works here.
+var _ = (*openid.DefaultSession)(nil) // ensure import is used

@@ -9,6 +9,7 @@ import (
 	"github.com/hasbyte1/go-laravel-utils/sanctum"
 	"github.com/ory/fosite"
 	"github.com/ory/fosite/compose"
+	"github.com/ory/fosite/token/jwt"
 )
 
 // Server is the OAuth2/OIDC authorization server.
@@ -66,19 +67,26 @@ func NewServer(
 
 	ad := newAdapter(clients, authCodes, accessToks, refreshToks, devices, users)
 
-	// NewOAuth2JWTStrategy in fosite v0.49 takes a keyGetter func as first arg.
+	// Build a CommonStrategy that satisfies both oauth2.CoreStrategy (for JWT access tokens)
+	// and openid.OpenIDConnectTokenStrategy (for ID tokens). fosite v0.49 requires
+	// OpenIDConnectExplicitFactory to receive a strategy that implements GenerateIDToken,
+	// which *oauth2.DefaultJWTStrategy alone does not implement.
 	keyGetter := func(_ context.Context) (any, error) {
 		return key, nil
 	}
 	hmacStrategy := compose.NewOAuth2HMACStrategy(fositeConfig)
-	jwtStrategy := compose.NewOAuth2JWTStrategy(keyGetter, hmacStrategy, fositeConfig)
+	commonStrategy := &compose.CommonStrategy{
+		CoreStrategy:               compose.NewOAuth2JWTStrategy(keyGetter, hmacStrategy, fositeConfig),
+		OpenIDConnectTokenStrategy: compose.NewOpenIDConnectStrategy(keyGetter, fositeConfig),
+		Signer:                     &jwt.DefaultSigner{GetPrivateKey: keyGetter},
+	}
 
 	// fosite v0.49 has no device-code compose factory; omit it.
 	// Device flow is handled externally via Server.ApproveDevice / DenyDevice.
 	provider := compose.Compose(
 		fositeConfig,
 		ad,
-		jwtStrategy,
+		commonStrategy,
 		compose.OAuth2AuthorizeExplicitFactory,
 		compose.OAuth2ClientCredentialsGrantFactory,
 		compose.OAuth2RefreshTokenGrantFactory,
