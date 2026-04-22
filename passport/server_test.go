@@ -108,8 +108,11 @@ func TestServer_ClientCredentials(t *testing.T) {
 		t.Fatalf("got %d: %s", resp.StatusCode, body)
 	}
 	var result map[string]any
-	json.NewDecoder(resp.Body).Decode(&result)
-	if result["access_token"] == "" {
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	tok, ok := result["access_token"].(string)
+	if !ok || tok == "" {
 		t.Fatal("no access_token in response")
 	}
 	if result["token_type"] != "bearer" {
@@ -152,7 +155,9 @@ func TestServer_Discovery(t *testing.T) {
 		t.Fatalf("got %d", resp.StatusCode)
 	}
 	var doc map[string]any
-	json.NewDecoder(resp.Body).Decode(&doc)
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatalf("decode discovery doc: %v", err)
+	}
 	if doc["issuer"] == "" {
 		t.Fatal("discovery doc missing issuer")
 	}
@@ -174,7 +179,9 @@ func TestServer_JWKS(t *testing.T) {
 		t.Fatalf("got %d", resp.StatusCode)
 	}
 	var jwks map[string]any
-	json.NewDecoder(resp.Body).Decode(&jwks)
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		t.Fatalf("decode JWKS: %v", err)
+	}
 	keys, ok := jwks["keys"].([]any)
 	if !ok || len(keys) == 0 {
 		t.Fatal("JWKS response has no keys")
@@ -192,7 +199,10 @@ func TestServer_Revoke(t *testing.T) {
 		"scope":         {"read"},
 	})
 	var result map[string]any
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		resp.Body.Close()
+		t.Fatalf("decode token response: %v", err)
+	}
 	resp.Body.Close()
 
 	token, _ := result["access_token"].(string)
