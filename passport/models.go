@@ -36,7 +36,8 @@ type OAuthClient struct {
 	Public bool
 
 	// FirstParty marks trusted first-party clients (e.g. the main portal).
-	// ConsentProvider uses this to auto-grant consent without showing a consent screen.
+	// Callers may use this field in their ConsentProvider to auto-grant consent
+	// without showing a consent screen.
 	FirstParty bool
 }
 

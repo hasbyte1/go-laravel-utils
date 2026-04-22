@@ -371,7 +371,15 @@ func (s *combinedSession) Clone() fosite.Session {
 	if s == nil {
 		return nil
 	}
-	clonedDefault := s.DefaultSession.Clone().(*openid.DefaultSession)
+	var clonedDefault *openid.DefaultSession
+	if s.DefaultSession != nil {
+		clonedDefault = s.DefaultSession.Clone().(*openid.DefaultSession)
+	} else {
+		clonedDefault = &openid.DefaultSession{
+			Claims:  &jwt.IDTokenClaims{},
+			Headers: &jwt.Headers{},
+		}
+	}
 	cloned := &combinedSession{DefaultSession: clonedDefault}
 	if s.ExtraClaims != nil {
 		cloned.ExtraClaims = make(map[string]any, len(s.ExtraClaims))

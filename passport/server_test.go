@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -242,6 +243,173 @@ func TestServer_DeviceAuthorization_notImplemented(t *testing.T) {
 		t.Skip("device grant appears to be implemented; update this test")
 	}
 	// Any non-panic response is acceptable (501, 400, etc.)
+}
+
+// setupServerWithOptions is like setupServer but accepts additional ServerOptions.
+func setupServerWithOptions(t *testing.T, opts ...passport.ServerOption) (*passport.Server, *inmemory.Store, *inmemory.SessionStore, *httptest.Server) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := inmemory.New()
+	store.AddClient(&passport.OAuthClient{
+		ID:           "test-client",
+		SecretHash:   "$2a$10$IxMdI6d.LIRZPpSfEwNoeu4rY3FhDREsxFJXikcgdRRAStxUlsuEO", // = "foobar"
+		Name:         "Test Client",
+		RedirectURIs: []string{"http://localhost/callback"},
+		GrantTypes:   []string{"authorization_code", "client_credentials", "refresh_token"},
+		Scopes:       []string{"openid", "profile", "read"},
+		Public:       false,
+	})
+	store.AddClient(&passport.OAuthClient{
+		ID:           "public-client",
+		Name:         "Public Client",
+		RedirectURIs: []string{"http://localhost/callback"},
+		GrantTypes:   []string{"authorization_code", "refresh_token"},
+		Scopes:       []string{"openid", "profile"},
+		Public:       true,
+	})
+
+	user := &testUser{id: "user-1"}
+	sessions := inmemory.NewSessionStore()
+	sessions.Set("valid-session", user)
+
+	cfg := passport.DefaultConfig("http://127.0.0.1")
+	cfg.GlobalSecret = []byte("01234567890123456789012345678901")
+	cfg.LoginURL = "http://localhost/login"
+	cfg.ConsentURL = "http://localhost/consent"
+
+	srv, err := passport.NewServer(
+		cfg, store, store, store, store, store,
+		sessions, inmemory.NewConsentStore(), &testUserInfoProvider{},
+		&testUserProvider{u: user}, key,
+		opts...,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	return srv, store, sessions, ts
+}
+
+// authorizeURL builds a valid /oauth/authorize URL for the public-client with PKCE.
+// The code_challenge is the S256 hash of "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk".
+const (
+	testCodeVerifier  = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	testCodeChallenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+)
+
+func buildAuthorizeURL(baseURL string) string {
+	return baseURL + "/oauth/authorize?response_type=code&client_id=public-client" +
+		"&redirect_uri=http://localhost/callback&scope=openid" +
+		"&state=xyzxyzxy&code_challenge=" + testCodeChallenge +
+		"&code_challenge_method=S256"
+}
+
+// TestWithSessionEnricher_ExtraClaimsReachSession verifies that extra claims
+// returned by the enricher are stored in the session during HandleAuthorize,
+// evidenced by the authorize flow completing successfully (redirect to callback
+// with a code) rather than redirecting to the consent or login URL.
+func TestWithSessionEnricher_ExtraClaimsReachSession(t *testing.T) {
+	enricherCalled := false
+	enricher := func(_ context.Context, userID string) (map[string]any, error) {
+		enricherCalled = true
+		return map[string]any{"role": "admin", "user_id": userID}, nil
+	}
+
+	_, _, sessions, ts := setupServerWithOptions(t, passport.WithSessionEnricher(enricher))
+	defer ts.Close()
+
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	req, err := http.NewRequest(http.MethodGet, buildAuthorizeURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessions.CookieName, Value: "valid-session"})
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if !enricherCalled {
+		t.Fatal("enricher was not called during HandleAuthorize")
+	}
+
+	// A successful authorize redirects to the redirect_uri with a code param.
+	// fosite may use 302 Found or 303 See Other for the authorize redirect.
+	if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusSeeOther {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("got %d, want redirect (302/303) to callback; body: %s", resp.StatusCode, body)
+	}
+	loc := resp.Header.Get("Location")
+	if !strings.HasPrefix(loc, "http://localhost/callback") {
+		t.Fatalf("expected redirect to callback, got %q", loc)
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		t.Fatalf("parse redirect location: %v", err)
+	}
+	if u.Query().Get("code") == "" {
+		t.Fatalf("no code in redirect location: %q", loc)
+	}
+}
+
+// TestWithSessionEnricher_ErrorCausesErrorResponse verifies that when the enricher
+// returns an error, HandleAuthorize writes an error response instead of issuing
+// an authorization code redirect.
+func TestWithSessionEnricher_ErrorCausesErrorResponse(t *testing.T) {
+	enricherErr := errors.New("enricher downstream failure")
+	enricher := func(_ context.Context, _ string) (map[string]any, error) {
+		return nil, enricherErr
+	}
+
+	_, _, sessions, ts := setupServerWithOptions(t, passport.WithSessionEnricher(enricher))
+	defer ts.Close()
+
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+
+	req, err := http.NewRequest(http.MethodGet, buildAuthorizeURL(ts.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessions.CookieName, Value: "valid-session"})
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// fosite writes authorize errors either as a redirect with error= param or
+	// as a JSON/HTML body with a non-2xx/non-redirect status. Either way, no
+	// authorization code must be issued.
+	isRedirect := resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther
+	if isRedirect {
+		loc := resp.Header.Get("Location")
+		u, _ := url.Parse(loc)
+		// If it redirects to the callback it must carry an error param, not a code.
+		if strings.HasPrefix(loc, "http://localhost/callback") {
+			if u.Query().Get("code") != "" {
+				t.Fatal("enricher error must not result in an authorization code being issued")
+			}
+			if u.Query().Get("error") == "" {
+				t.Fatalf("enricher error redirect to callback missing error param: %q", loc)
+			}
+		}
+		// A redirect to somewhere other than the callback (e.g. error page) is also fine.
+	}
 }
 
 func TestServer_UserInfo_acceptsPOST(t *testing.T) {

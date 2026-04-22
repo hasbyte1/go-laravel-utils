@@ -186,3 +186,43 @@ func TestCombinedSession_Clone_nilSafe(t *testing.T) {
 		t.Fatalf("Clone() on nil must return nil, got %v", got)
 	}
 }
+
+// TestCombinedSession_Clone_nilDefaultSession verifies that Clone() does not panic
+// when DefaultSession is nil on a non-nil receiver (e.g. after unmarshalSession
+// deserializes a zero-value blob), and that it returns a valid *combinedSession
+// with non-nil Claims and Headers.
+func TestCombinedSession_Clone_nilDefaultSession(t *testing.T) {
+	s := &combinedSession{DefaultSession: nil, ExtraClaims: map[string]any{"k": "v"}}
+
+	var cloned fosite.Session
+	// Must not panic.
+	cloned = s.Clone()
+
+	cs, ok := cloned.(*combinedSession)
+	if !ok {
+		t.Fatalf("Clone() must return *combinedSession, got %T", cloned)
+	}
+	if cs.DefaultSession == nil {
+		t.Fatal("Clone() must initialise DefaultSession when source is nil")
+	}
+	if cs.DefaultSession.Claims == nil {
+		t.Fatal("Clone() must initialise DefaultSession.Claims")
+	}
+	if cs.DefaultSession.Headers == nil {
+		t.Fatal("Clone() must initialise DefaultSession.Headers")
+	}
+	if cs.ExtraClaims["k"] != "v" {
+		t.Errorf("ExtraClaims not copied: got %v", cs.ExtraClaims["k"])
+	}
+}
+
+// TestCombinedSession_Clone_nilDefaultSession_implementsJWTSessionContainer verifies
+// that the value returned by Clone() when DefaultSession was nil still satisfies
+// oauth2.JWTSessionContainer — required by fosite's refresh-token grant.
+func TestCombinedSession_Clone_nilDefaultSession_implementsJWTSessionContainer(t *testing.T) {
+	s := &combinedSession{DefaultSession: nil}
+	cloned := s.Clone()
+	if _, ok := cloned.(oauth2.JWTSessionContainer); !ok {
+		t.Fatalf("Clone() result %T does not implement oauth2.JWTSessionContainer", cloned)
+	}
+}
