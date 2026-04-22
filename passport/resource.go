@@ -272,12 +272,13 @@ func mapToClaims(payload map[string]any, expectedIssuer string) (*TokenClaims, e
 	if iss != expectedIssuer {
 		return nil, fmt.Errorf("%w: issuer %q does not match expected %q", ErrInvalidToken, iss, expectedIssuer)
 	}
-	var exp time.Time
-	if expF, ok := payload["exp"].(float64); ok {
-		exp = time.Unix(int64(expF), 0)
-		if time.Now().After(exp) {
-			return nil, ErrTokenExpired
-		}
+	expF, hasExp := payload["exp"].(float64)
+	if !hasExp {
+		return nil, ErrInvalidToken
+	}
+	exp := time.Unix(int64(expF), 0)
+	if time.Now().After(exp) {
+		return nil, ErrTokenExpired
 	}
 	sub, _ := payload["sub"].(string)
 	clientID, _ := payload["client_id"].(string)

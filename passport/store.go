@@ -37,6 +37,9 @@ type RefreshTokenStore interface {
 	CreateRefreshToken(ctx context.Context, token *RefreshToken) error
 	// GetRefreshToken returns the refresh token for the given signature.
 	// Returns ErrTokenNotFound when absent.
+	// When the token exists but Active==false, return (token, ErrTokenInactive).
+	// The record must be returned alongside ErrTokenInactive so callers can build
+	// a requester for revocation (mirroring AuthorizationCodeStore.GetAuthorizationCode).
 	GetRefreshToken(ctx context.Context, signature string) (*RefreshToken, error)
 	// DeleteRefreshToken removes the refresh token with the given signature.
 	DeleteRefreshToken(ctx context.Context, signature string) error

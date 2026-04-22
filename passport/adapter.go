@@ -10,6 +10,7 @@ import (
 
 	"github.com/hasbyte1/go-laravel-utils/sanctum"
 	"github.com/ory/fosite"
+	"github.com/ory/fosite/handler/oauth2"
 	"github.com/ory/fosite/handler/openid"
 	"github.com/ory/fosite/token/jwt"
 )
@@ -98,10 +99,7 @@ func (a *adapter) CreateAuthorizeCodeSession(ctx context.Context, code string, r
 	if err != nil {
 		return fmt.Errorf("passport adapter: marshal auth code session: %w", err)
 	}
-	userID := ""
-	if sess, ok := req.GetSession().(*openid.DefaultSession); ok {
-		userID = sess.Subject
-	}
+	userID := sessionSubject(req.GetSession())
 	ac := &AuthorizationCode{
 		Code:        code,
 		RequestID:   req.GetID(),
@@ -149,10 +147,7 @@ func (a *adapter) CreateAccessTokenSession(ctx context.Context, signature string
 	if err != nil {
 		return err
 	}
-	userID := ""
-	if sess, ok := req.GetSession().(*openid.DefaultSession); ok {
-		userID = sess.Subject
-	}
+	userID := sessionSubject(req.GetSession())
 	tok := &AccessToken{
 		Signature:   signature,
 		RequestID:   req.GetID(),
@@ -200,10 +195,7 @@ func (a *adapter) CreateRefreshTokenSession(ctx context.Context, signature strin
 	if err != nil {
 		return err
 	}
-	userID := ""
-	if sess, ok := req.GetSession().(*openid.DefaultSession); ok {
-		userID = sess.Subject
-	}
+	userID := sessionSubject(req.GetSession())
 	tok := &RefreshToken{
 		Signature:   signature,
 		RequestID:   req.GetID(),
@@ -224,7 +216,13 @@ func (a *adapter) GetRefreshTokenSession(ctx context.Context, signature string, 
 			return nil, fosite.ErrNotFound
 		}
 		if errors.Is(err, ErrTokenInactive) {
-			c, _ := a.clients.GetClient(ctx, tok.ClientID)
+			if tok == nil {
+				return nil, fosite.ErrNotFound
+			}
+			c, clientErr := a.clients.GetClient(ctx, tok.ClientID)
+			if clientErr != nil {
+				return nil, clientErr
+			}
 			_ = unmarshalSession(tok.SessionData, session)
 			return buildRequest(c, tok.Scopes, tok.RequestID, session), fosite.ErrInactiveToken
 		}
@@ -412,6 +410,19 @@ func unmarshalRequester(ctx context.Context, data []byte, session fosite.Session
 		return nil, err
 	}
 	return buildRequest(c, sr.Scopes, sr.RequestID, session), nil
+}
+
+// sessionSubject extracts the subject from a fosite session, supporting both
+// openid.DefaultSession (used by the authorize endpoint) and oauth2.JWTSession
+// (used by the token endpoint). Returns "" for unrecognised session types.
+func sessionSubject(s fosite.Session) string {
+	switch sess := s.(type) {
+	case *openid.DefaultSession:
+		return sess.Subject
+	case *oauth2.JWTSession:
+		return sess.Subject
+	}
+	return ""
 }
 
 func buildRequest(c *OAuthClient, scopes []string, requestID string, session fosite.Session) fosite.Requester {
