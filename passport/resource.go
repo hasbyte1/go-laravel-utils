@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type contextKey int
@@ -76,6 +78,7 @@ type ResourceGuard struct {
 	mu          sync.RWMutex
 	cachedKeys  map[string]crypto.PublicKey // kid → public key
 	cacheExpiry time.Time
+	sf          singleflight.Group // deduplicates concurrent JWKS refreshes
 }
 
 // NewResourceGuard validates tokens using a static public key.
@@ -185,7 +188,11 @@ func (g *ResourceGuard) resolveKey(ctx context.Context, kid string) (crypto.Publ
 	if ok && !expired {
 		return key, nil
 	}
-	if err := g.refreshJWKS(ctx); err != nil {
+	// Deduplicate concurrent refreshes so only one HTTP request is in flight.
+	_, err, _ := g.sf.Do("jwks", func() (any, error) {
+		return nil, g.refreshJWKS(ctx)
+	})
+	if err != nil {
 		return nil, err
 	}
 	g.mu.RLock()
@@ -207,7 +214,10 @@ func (g *ResourceGuard) refreshJWKS(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("passport: JWKS endpoint returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return err
 	}

@@ -124,8 +124,11 @@ func (a *adapter) GetAuthorizeCodeSession(ctx context.Context, code string, sess
 		if errors.Is(err, ErrCodeInvalidated) {
 			req, buildErr := a.buildRequesterFromCode(ctx, ac, session)
 			if buildErr != nil {
-				// req is nil; fosite will convert this to ErrServerError.
-				_ = buildErr
+				// Return a minimal non-nil requester so fosite can safely call
+				// req.GetID() for access/refresh token revocation during replay detection.
+				minReq := fosite.NewRequest()
+				minReq.ID = ac.RequestID
+				return minReq, fosite.ErrInvalidatedAuthorizeCode
 			}
 			return req, fosite.ErrInvalidatedAuthorizeCode
 		}
@@ -342,7 +345,15 @@ func (fc *fositeClient) GetID() string                      { return fc.c.ID }
 func (fc *fositeClient) GetHashedSecret() []byte            { return []byte(fc.c.SecretHash) }
 func (fc *fositeClient) GetRedirectURIs() []string          { return fc.c.RedirectURIs }
 func (fc *fositeClient) GetGrantTypes() fosite.Arguments    { return fc.c.GrantTypes }
-func (fc *fositeClient) GetResponseTypes() fosite.Arguments { return fosite.Arguments{"code", "token"} }
+func (fc *fositeClient) GetResponseTypes() fosite.Arguments {
+	var rt fosite.Arguments
+	for _, gt := range fc.c.GrantTypes {
+		if gt == "authorization_code" {
+			rt = append(rt, "code")
+		}
+	}
+	return rt
+}
 func (fc *fositeClient) GetScopes() fosite.Arguments        { return fc.c.Scopes }
 func (fc *fositeClient) IsPublic() bool                     { return fc.c.Public }
 func (fc *fositeClient) GetAudience() fosite.Arguments      { return fosite.Arguments{} }

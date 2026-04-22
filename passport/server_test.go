@@ -243,3 +243,20 @@ func TestServer_DeviceAuthorization_notImplemented(t *testing.T) {
 	}
 	// Any non-panic response is acceptable (501, 400, etc.)
 }
+
+func TestServer_UserInfo_acceptsPOST(t *testing.T) {
+	_, _, _, ts := setupServer(t)
+	defer ts.Close()
+
+	// POST with a bad token — we're testing routing, not auth.
+	resp, err := http.PostForm(ts.URL+"/oauth/userinfo", url.Values{
+		"access_token": {"invalid-token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		t.Fatal("POST /oauth/userinfo returned 405 — endpoint must accept POST per RFC 9068 §6")
+	}
+}

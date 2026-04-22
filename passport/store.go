@@ -26,6 +26,8 @@ type AccessTokenStore interface {
 	// DeleteAccessToken removes the access token with the given signature.
 	DeleteAccessToken(ctx context.Context, signature string) error
 	// DeleteAccessTokensBySubject removes all access tokens for the given subject (user ID).
+	// This is a caller-facing helper for logout/account-deletion flows; the passport
+	// server itself never calls this method.
 	DeleteAccessTokensBySubject(ctx context.Context, subject string) error
 	// DeleteAccessTokensByRequestID removes all access tokens with the given fosite request ID.
 	DeleteAccessTokensByRequestID(ctx context.Context, requestID string) error
@@ -44,6 +46,8 @@ type RefreshTokenStore interface {
 	// DeleteRefreshToken removes the refresh token with the given signature.
 	DeleteRefreshToken(ctx context.Context, signature string) error
 	// DeleteRefreshTokensBySubject removes all refresh tokens for the given subject (user ID).
+	// This is a caller-facing helper for logout/account-deletion flows; the passport
+	// server itself never calls this method.
 	DeleteRefreshTokensBySubject(ctx context.Context, subject string) error
 	// RevokeRefreshTokensByRequestID sets Active=false for all tokens with the given request ID.
 	RevokeRefreshTokensByRequestID(ctx context.Context, requestID string) error

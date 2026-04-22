@@ -16,7 +16,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /oauth/authorize", s.HandleAuthorize())
 	mux.Handle("POST /oauth/token", s.HandleToken())
 	mux.Handle("POST /oauth/revoke", s.HandleRevoke())
-	mux.Handle("GET /oauth/userinfo", s.HandleUserInfo())
+	mux.Handle("/oauth/userinfo", s.HandleUserInfo())
 	mux.Handle("POST /oauth/device/code", s.HandleDeviceAuthorization())
 	mux.Handle("GET /.well-known/openid-configuration", s.HandleDiscovery())
 	mux.Handle("GET /.well-known/jwks.json", s.HandleJWKS())

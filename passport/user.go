@@ -26,6 +26,11 @@ type ConsentProvider interface {
 }
 
 // UserInfoProvider returns OIDC claims for a user given the granted scopes.
+//
+// Note: in the current implementation the scopes slice is always empty because
+// fosite v0.49 DefaultSession does not expose granted scopes after introspection.
+// Do not rely on scopes for claim filtering; look them up from your own store by
+// user ID if needed.
 type UserInfoProvider interface {
 	GetUserInfo(ctx context.Context, user sanctum.User, scopes []string) (map[string]any, error)
 }
