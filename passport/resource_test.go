@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -84,8 +85,8 @@ func TestResourceGuard_Authenticate_wrongIssuer(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+token)
 
 	_, err := guard.Authenticate(r)
-	if err == nil {
-		t.Fatal("expected error for wrong issuer")
+	if !errors.Is(err, passport.ErrInvalidToken) {
+		t.Fatalf("got %v, want ErrInvalidToken", err)
 	}
 }
 
@@ -132,6 +133,9 @@ func TestResourceGuard_Middleware_unauthorized(t *testing.T) {
 	}
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("got status %d, want 401", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("want Content-Type application/json, got %q", ct)
 	}
 }
 

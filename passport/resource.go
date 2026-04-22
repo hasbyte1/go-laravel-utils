@@ -148,6 +148,9 @@ func (g *ResourceGuard) validateJWT(ctx context.Context, token string) (*TokenCl
 	if err := json.Unmarshal(headerJSON, &header); err != nil {
 		return nil, ErrInvalidToken
 	}
+	if header.Alg != "RS256" {
+		return nil, ErrInvalidToken
+	}
 
 	key, err := g.resolveKey(ctx, header.Kid)
 	if err != nil {
@@ -267,7 +270,7 @@ func verifyRS256(signingInput, sig string, key crypto.PublicKey) error {
 func mapToClaims(payload map[string]any, expectedIssuer string) (*TokenClaims, error) {
 	iss, _ := payload["iss"].(string)
 	if iss != expectedIssuer {
-		return nil, fmt.Errorf("passport: token issuer %q does not match expected %q", iss, expectedIssuer)
+		return nil, fmt.Errorf("%w: issuer %q does not match expected %q", ErrInvalidToken, iss, expectedIssuer)
 	}
 	var exp time.Time
 	if expF, ok := payload["exp"].(float64); ok {
