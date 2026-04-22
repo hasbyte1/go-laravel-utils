@@ -330,7 +330,10 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 	token.OTPAttempts = 0
 	token.UpdatedAt = time.Now()
 
-	expiresAt := opts.ExpiresAt
+	var expiresAt *time.Time
+	if opts != nil {
+		expiresAt = opts.ExpiresAt
+	}
 	if expiresAt == nil && s.config.DefaultExpiry > 0 {
 		t := time.Now().Add(s.config.DefaultExpiry)
 		expiresAt = &t
