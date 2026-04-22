@@ -41,6 +41,7 @@ type OAuthClient struct {
 // as a text/blob column and return it unchanged.
 type AuthorizationCode struct {
 	Code                string
+	RequestID           string // fosite request ID, used for token revocation on replay
 	ClientID            string
 	UserID              string
 	RedirectURI         string

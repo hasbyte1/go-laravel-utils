@@ -80,6 +80,11 @@ func (a *adapter) ClientAssertionJWTValid(_ context.Context, jti string) error {
 func (a *adapter) SetClientAssertionJWT(_ context.Context, jti string, exp time.Time) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	for j, e := range a.jtiDenylist {
+		if time.Now().After(e) {
+			delete(a.jtiDenylist, j)
+		}
+	}
 	a.jtiDenylist[jti] = exp
 	return nil
 }
@@ -99,6 +104,7 @@ func (a *adapter) CreateAuthorizeCodeSession(ctx context.Context, code string, r
 	}
 	ac := &AuthorizationCode{
 		Code:        code,
+		RequestID:   req.GetID(),
 		ClientID:    req.GetClient().GetID(),
 		UserID:      userID,
 		RedirectURI: req.GetRequestForm().Get("redirect_uri"),
@@ -118,7 +124,11 @@ func (a *adapter) GetAuthorizeCodeSession(ctx context.Context, code string, sess
 			return nil, fosite.ErrNotFound
 		}
 		if errors.Is(err, ErrCodeInvalidated) {
-			req, _ := a.buildRequesterFromCode(ctx, ac, session)
+			req, buildErr := a.buildRequesterFromCode(ctx, ac, session)
+			if buildErr != nil {
+				// req is nil; fosite will convert this to ErrServerError.
+				_ = buildErr
+			}
 			return req, fosite.ErrInvalidatedAuthorizeCode
 		}
 		return nil, err
@@ -423,5 +433,5 @@ func (a *adapter) buildRequesterFromCode(ctx context.Context, ac *AuthorizationC
 	if err != nil {
 		return nil, err
 	}
-	return buildRequest(c, ac.Scopes, "", session), nil
+	return buildRequest(c, ac.Scopes, ac.RequestID, session), nil
 }

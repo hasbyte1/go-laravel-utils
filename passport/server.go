@@ -46,8 +46,8 @@ func NewServer(
 	if cfg.Issuer == "" {
 		return nil, errors.New("passport: Config.Issuer is required")
 	}
-	if len(cfg.GlobalSecret) == 0 {
-		return nil, errors.New("passport: Config.GlobalSecret is required (must be 32 bytes)")
+	if len(cfg.GlobalSecret) < 32 {
+		return nil, errors.New("passport: Config.GlobalSecret must be at least 32 bytes")
 	}
 
 	applyDefaults(&cfg)
