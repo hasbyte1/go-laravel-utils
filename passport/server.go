@@ -24,6 +24,10 @@ type Server struct {
 	devices   DeviceStore
 	publicKey any // *rsa.PublicKey
 	enricher  func(ctx context.Context, userID string) (map[string]any, error)
+	pkceKV    EphemeralKV
+	oidcKV    EphemeralKV
+	jtiKV     EphemeralKV
+	deviceKV  EphemeralKV
 }
 
 // ServerOption is a functional option for Server.
@@ -34,6 +38,30 @@ type ServerOption func(*Server)
 // user's ID immediately before NewAuthorizeResponse.
 func WithSessionEnricher(fn func(ctx context.Context, userID string) (map[string]any, error)) ServerOption {
 	return func(s *Server) { s.enricher = fn }
+}
+
+// WithPKCEStore sets the EphemeralKV backend for PKCE code verifier sessions.
+// Defaults to an in-memory store if not set.
+func WithPKCEStore(s EphemeralKV) ServerOption {
+	return func(srv *Server) { srv.pkceKV = s }
+}
+
+// WithOIDCStore sets the EphemeralKV backend for OIDC authorization code sessions.
+// Defaults to an in-memory store if not set.
+func WithOIDCStore(s EphemeralKV) ServerOption {
+	return func(srv *Server) { srv.oidcKV = s }
+}
+
+// WithJTIStore sets the EphemeralKV backend for JWT assertion JTI replay protection.
+// Defaults to an in-memory store if not set.
+func WithJTIStore(s EphemeralKV) ServerOption {
+	return func(srv *Server) { srv.jtiKV = s }
+}
+
+// WithDeviceSessionStore sets the EphemeralKV backend for device flow session state.
+// Defaults to an in-memory store if not set.
+func WithDeviceSessionStore(s EphemeralKV) ServerOption {
+	return func(srv *Server) { srv.deviceKV = s }
 }
 
 // NewServer constructs a Server, wiring all consumer stores into fosite.
@@ -61,6 +89,34 @@ func NewServer(
 
 	applyDefaults(&cfg)
 
+	// Apply options early so KV fields are set before newAdapter is called.
+	srv := &Server{
+		config:    cfg,
+		sessions:  sessions,
+		consent:   consent,
+		userInfo:  userInfo,
+		users:     users,
+		devices:   devices,
+		publicKey: &key.PublicKey,
+	}
+	for _, opt := range opts {
+		opt(srv)
+	}
+
+	// Default nil stores to in-memory — preserves backward compatibility.
+	if srv.pkceKV == nil {
+		srv.pkceKV = newInternalEphemeralKV()
+	}
+	if srv.oidcKV == nil {
+		srv.oidcKV = newInternalEphemeralKV()
+	}
+	if srv.jtiKV == nil {
+		srv.jtiKV = newInternalEphemeralKV()
+	}
+	if srv.deviceKV == nil {
+		srv.deviceKV = newInternalEphemeralKV()
+	}
+
 	fositeConfig := &fosite.Config{
 		AccessTokenLifespan:            cfg.AccessTokenTTL,
 		RefreshTokenLifespan:           cfg.RefreshTokenTTL,
@@ -73,7 +129,8 @@ func NewServer(
 		EnablePKCEPlainChallengeMethod: false,
 	}
 
-	ad := newAdapter(clients, authCodes, accessToks, refreshToks, devices, users)
+	ad := newAdapter(clients, authCodes, accessToks, refreshToks, devices, users,
+		srv.pkceKV, srv.oidcKV, srv.jtiKV, srv.deviceKV)
 
 	// Build a CommonStrategy that satisfies both oauth2.CoreStrategy (for JWT access tokens)
 	// and openid.OpenIDConnectTokenStrategy (for ID tokens). fosite v0.49 requires
@@ -103,20 +160,9 @@ func NewServer(
 		compose.OAuth2PKCEFactory,
 	)
 
-	srv := &Server{
-		provider:  provider,
-		config:    cfg,
-		adapter:   ad,
-		sessions:  sessions,
-		consent:   consent,
-		userInfo:  userInfo,
-		users:     users,
-		devices:   devices,
-		publicKey: &key.PublicKey,
-	}
-	for _, opt := range opts {
-		opt(srv)
-	}
+	srv.provider = provider
+	srv.adapter = ad
+
 	return srv, nil
 }
 

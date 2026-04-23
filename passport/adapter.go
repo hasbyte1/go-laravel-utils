@@ -25,11 +25,10 @@ type adapter struct {
 	devices     DeviceStore
 	users       sanctum.UserProvider
 
-	mu           sync.RWMutex
-	pkceSessions map[string][]byte    // auth code → serialized fosite.Requester
-	oidcSessions map[string][]byte    // auth code → serialized fosite.Requester
-	jtiDenylist  map[string]time.Time // JWT assertion JTIs
-	reqToDevice  map[string]string    // fosite requestID → device code string
+	pkceKV   EphemeralKV
+	oidcKV   EphemeralKV
+	jtiKV    EphemeralKV
+	deviceKV EphemeralKV
 }
 
 func newAdapter(
@@ -39,18 +38,19 @@ func newAdapter(
 	refreshToks RefreshTokenStore,
 	devices DeviceStore,
 	users sanctum.UserProvider,
+	pkceKV, oidcKV, jtiKV, deviceKV EphemeralKV,
 ) *adapter {
 	return &adapter{
-		clients:      clients,
-		authCodes:    authCodes,
-		accessToks:   accessToks,
-		refreshToks:  refreshToks,
-		devices:      devices,
-		users:        users,
-		pkceSessions: make(map[string][]byte),
-		oidcSessions: make(map[string][]byte),
-		jtiDenylist:  make(map[string]time.Time),
-		reqToDevice:  make(map[string]string),
+		clients:     clients,
+		authCodes:   authCodes,
+		accessToks:  accessToks,
+		refreshToks: refreshToks,
+		devices:     devices,
+		users:       users,
+		pkceKV:      pkceKV,
+		oidcKV:      oidcKV,
+		jtiKV:       jtiKV,
+		deviceKV:    deviceKV,
 	}
 }
 
@@ -69,25 +69,23 @@ func (a *adapter) GetClient(ctx context.Context, id string) (fosite.Client, erro
 	return &fositeClient{c: c}, nil
 }
 
-func (a *adapter) ClientAssertionJWTValid(_ context.Context, jti string) error {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if exp, ok := a.jtiDenylist[jti]; ok && time.Now().Before(exp) {
-		return fosite.ErrJTIKnown
+func (a *adapter) ClientAssertionJWTValid(ctx context.Context, jti string) error {
+	_, err := a.jtiKV.Get(ctx, jti)
+	if err == nil {
+		return fosite.ErrJTIKnown // key present → replay detected
 	}
-	return nil
+	if errors.Is(err, ErrKeyNotFound) {
+		return nil // not in denylist
+	}
+	return err
 }
 
-func (a *adapter) SetClientAssertionJWT(_ context.Context, jti string, exp time.Time) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for j, e := range a.jtiDenylist {
-		if time.Now().After(e) {
-			delete(a.jtiDenylist, j)
-		}
+func (a *adapter) SetClientAssertionJWT(ctx context.Context, jti string, exp time.Time) error {
+	ttl := time.Until(exp)
+	if ttl <= 0 {
+		return nil // already expired, no need to store
 	}
-	a.jtiDenylist[jti] = exp
-	return nil
+	return a.jtiKV.Set(ctx, jti, []byte{1}, ttl)
 }
 
 // -----------------------------------------------------------------------
@@ -268,64 +266,122 @@ func (a *adapter) RevokeAccessToken(ctx context.Context, requestID string) error
 // pkce.PKCERequestStorage
 // -----------------------------------------------------------------------
 
-func (a *adapter) CreatePKCERequestSession(_ context.Context, code string, req fosite.Requester) error {
+func (a *adapter) CreatePKCERequestSession(ctx context.Context, code string, req fosite.Requester) error {
 	data, err := marshalRequester(req)
 	if err != nil {
 		return err
 	}
-	a.mu.Lock()
-	a.pkceSessions[code] = data
-	a.mu.Unlock()
-	return nil
+	ttl := time.Until(req.GetSession().GetExpiresAt(fosite.AuthorizeCode))
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	return a.pkceKV.Set(ctx, code, data, ttl)
 }
 
 func (a *adapter) GetPKCERequestSession(ctx context.Context, code string, session fosite.Session) (fosite.Requester, error) {
-	a.mu.RLock()
-	data, ok := a.pkceSessions[code]
-	a.mu.RUnlock()
-	if !ok {
+	data, err := a.pkceKV.Get(ctx, code)
+	if errors.Is(err, ErrKeyNotFound) {
 		return nil, fosite.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
 	}
 	return unmarshalRequester(ctx, data, session, a.clients)
 }
 
-func (a *adapter) DeletePKCERequestSession(_ context.Context, code string) error {
-	a.mu.Lock()
-	delete(a.pkceSessions, code)
-	a.mu.Unlock()
-	return nil
+func (a *adapter) DeletePKCERequestSession(ctx context.Context, code string) error {
+	return a.pkceKV.Delete(ctx, code)
 }
 
 // -----------------------------------------------------------------------
 // openid.OpenIDConnectRequestStorage
 // -----------------------------------------------------------------------
 
-func (a *adapter) CreateOpenIDConnectSession(_ context.Context, code string, req fosite.Requester) error {
+func (a *adapter) CreateOpenIDConnectSession(ctx context.Context, code string, req fosite.Requester) error {
 	data, err := marshalRequester(req)
 	if err != nil {
 		return err
 	}
-	a.mu.Lock()
-	a.oidcSessions[code] = data
-	a.mu.Unlock()
-	return nil
+	ttl := time.Until(req.GetSession().GetExpiresAt(fosite.AuthorizeCode))
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	return a.oidcKV.Set(ctx, code, data, ttl)
 }
 
 func (a *adapter) GetOpenIDConnectSession(ctx context.Context, code string, _ fosite.Requester) (fosite.Requester, error) {
-	a.mu.RLock()
-	data, ok := a.oidcSessions[code]
-	a.mu.RUnlock()
-	if !ok {
+	data, err := a.oidcKV.Get(ctx, code)
+	if errors.Is(err, ErrKeyNotFound) {
 		return nil, fosite.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
 	}
 	sess := newEmptySession()
 	return unmarshalRequester(ctx, data, sess, a.clients)
 }
 
-func (a *adapter) DeleteOpenIDConnectSession(_ context.Context, code string) error {
-	a.mu.Lock()
-	delete(a.oidcSessions, code)
-	a.mu.Unlock()
+func (a *adapter) DeleteOpenIDConnectSession(ctx context.Context, code string) error {
+	return a.oidcKV.Delete(ctx, code)
+}
+
+// -----------------------------------------------------------------------
+// internalEphemeralKV — private in-process EphemeralKV used as the default
+// when no external store is supplied to NewServer. Consumers that need
+// Redis-backed or shared-memory storage should pass an explicit EphemeralKV
+// via the WithPKCEStore / WithOIDCStore / WithJTIStore / WithDeviceSessionStore
+// options. This type must NOT be exported; use passport/inmemory for that.
+// -----------------------------------------------------------------------
+
+type internalEphKVEntry struct {
+	value     []byte
+	expiresAt time.Time // zero means no expiry
+}
+
+type internalEphKV struct {
+	mu      sync.RWMutex
+	entries map[string]internalEphKVEntry
+}
+
+func newInternalEphemeralKV() EphemeralKV {
+	return &internalEphKV{entries: make(map[string]internalEphKVEntry)}
+}
+
+func (e *internalEphKV) Set(_ context.Context, key string, value []byte, ttl time.Duration) error {
+	var exp time.Time
+	if ttl > 0 {
+		exp = time.Now().Add(ttl)
+	}
+	v := make([]byte, len(value))
+	copy(v, value)
+	e.mu.Lock()
+	e.entries[key] = internalEphKVEntry{value: v, expiresAt: exp}
+	e.mu.Unlock()
+	return nil
+}
+
+func (e *internalEphKV) Get(_ context.Context, key string) ([]byte, error) {
+	e.mu.RLock()
+	entry, ok := e.entries[key]
+	e.mu.RUnlock()
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
+		e.mu.Lock()
+		delete(e.entries, key)
+		e.mu.Unlock()
+		return nil, ErrKeyNotFound
+	}
+	v := make([]byte, len(entry.value))
+	copy(v, entry.value)
+	return v, nil
+}
+
+func (e *internalEphKV) Delete(_ context.Context, key string) error {
+	e.mu.Lock()
+	delete(e.entries, key)
+	e.mu.Unlock()
 	return nil
 }
 
