@@ -1,6 +1,9 @@
 package passport
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // AuthorizationCodeStore persists authorization codes.
 type AuthorizationCodeStore interface {
@@ -67,4 +70,15 @@ type DeviceStore interface {
 	UpdateDeviceCode(ctx context.Context, req *DeviceCode) error
 	// DeleteDeviceCode removes the device code record with the given device_code string.
 	DeleteDeviceCode(ctx context.Context, deviceCode string) error
+}
+
+// EphemeralKV is a TTL-aware key-value store for ephemeral OAuth2 session state.
+// Implement this interface to use Redis, Memcached, or any other backend.
+//
+// A zero TTL in Set means the entry persists until explicitly deleted.
+// Get must return [ErrKeyNotFound] when the key is absent or has expired.
+type EphemeralKV interface {
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
+	Get(ctx context.Context, key string) ([]byte, error)
+	Delete(ctx context.Context, key string) error
 }
