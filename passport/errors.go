@@ -43,4 +43,8 @@ var (
 	// ErrTokenExpired is returned by [ResourceGuard] when the token's exp
 	// claim is in the past.
 	ErrTokenExpired = errors.New("passport: token expired")
+
+	// ErrKeyNotFound is returned by EphemeralKV.Get when the key does not exist
+	// or has expired. The adapter maps this to fosite.ErrNotFound internally.
+	ErrKeyNotFound = errors.New("passport: key not found")
 )

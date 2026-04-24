@@ -57,7 +57,8 @@ func (m *minAuthCodeStore) DeleteAuthorizationCode(_ context.Context, code strin
 // fosite can safely call req.GetID() for token revocation without panicking.
 func TestGetAuthorizeCodeSession_replayWithUnresolvableClient_returnsNonNilRequester(t *testing.T) {
 	codeStore := &minAuthCodeStore{codes: make(map[string]*AuthorizationCode)}
-	a := newAdapter(&minClientStore{}, codeStore, nil, nil, nil, nil)
+	a := newAdapter(&minClientStore{}, codeStore, nil, nil, nil, nil,
+		newInternalEphemeralKV(), newInternalEphemeralKV(), newInternalEphemeralKV(), newInternalEphemeralKV())
 
 	ctx := context.Background()
 
