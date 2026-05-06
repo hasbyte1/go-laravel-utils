@@ -412,6 +412,44 @@ func TestWithSessionEnricher_ErrorCausesErrorResponse(t *testing.T) {
 	}
 }
 
+func TestServer_UserInfo_RequiresOpenIDScope(t *testing.T) {
+	_, _, _, ts := setupServer(t)
+	defer ts.Close()
+
+	// Obtain a token with only "read" scope — no "openid".
+	resp, err := http.PostForm(ts.URL+"/oauth/token", url.Values{
+		"grant_type":    {"client_credentials"},
+		"client_id":     {"test-client"},
+		"client_secret": {"foobar"},
+		"scope":         {"read"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var tokenResp map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		t.Fatalf("decode token response: %v", err)
+	}
+	accessToken, _ := tokenResp["access_token"].(string)
+	if accessToken == "" {
+		t.Fatal("no access_token in token response")
+	}
+
+	// Calling /oauth/userinfo with a token that lacks "openid" must be rejected.
+	req, _ := http.NewRequest("GET", ts.URL+"/oauth/userinfo", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	uiResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uiResp.Body.Close()
+	if uiResp.StatusCode != http.StatusForbidden {
+		body, _ := io.ReadAll(uiResp.Body)
+		t.Fatalf("/oauth/userinfo without openid scope: got %d, want 403; body: %s", uiResp.StatusCode, body)
+	}
+}
+
 func TestServer_UserInfo_acceptsPOST(t *testing.T) {
 	_, _, _, ts := setupServer(t)
 	defer ts.Close()

@@ -261,6 +261,10 @@ func jwkToRSA(nB64, eB64 string) (*rsa.PublicKey, error) {
 	}
 	n := new(big.Int).SetBytes(nBytes)
 	e := new(big.Int).SetBytes(eBytes)
+	maxE := big.NewInt(1<<31 - 1)
+	if e.Cmp(big.NewInt(1)) <= 0 || e.Cmp(maxE) > 0 {
+		return nil, errors.New("passport: JWK RSA exponent out of valid range")
+	}
 	return &rsa.PublicKey{N: n, E: int(e.Int64())}, nil
 }
 

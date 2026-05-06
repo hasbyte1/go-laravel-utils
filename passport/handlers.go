@@ -2,6 +2,7 @@ package passport
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,7 +34,8 @@ func (s *Server) HandleAuthorize() http.Handler {
 
 		user, err := s.sessions.GetUser(ctx, r)
 		if err != nil {
-			s.provider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithDebug(err.Error()))
+			log.Printf("passport: get user session: %v", err)
+			s.provider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError)
 			return
 		}
 		if user == nil {
@@ -45,7 +47,8 @@ func (s *Server) HandleAuthorize() http.Handler {
 		scopes := ar.GetRequestedScopes()
 		granted, err := s.consent.IsConsentGranted(ctx, user.GetID(), ar.GetClient().GetID(), scopes)
 		if err != nil {
-			s.provider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithDebug(err.Error()))
+			log.Printf("passport: consent check: %v", err)
+			s.provider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError)
 			return
 		}
 		if !granted {
@@ -68,7 +71,8 @@ func (s *Server) HandleAuthorize() http.Handler {
 		if s.enricher != nil {
 			extra, enrichErr := s.enricher(ctx, user.GetID())
 			if enrichErr != nil {
-				s.provider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError.WithDebug(enrichErr.Error()))
+				log.Printf("passport: session enricher: %v", enrichErr)
+				s.provider.WriteAuthorizeError(ctx, w, ar, fosite.ErrServerError)
 				return
 			}
 			sess.ExtraClaims = extra

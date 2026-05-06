@@ -2,6 +2,7 @@ package sanctum
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"strings"
 	"time"
@@ -151,7 +152,7 @@ func (s *TokenService) AuthenticateToken(ctx context.Context, plainText string, 
 		return nil, nil, err
 	}
 
-	if HashToken(secret) != token.Hash {
+	if subtle.ConstantTimeCompare([]byte(HashToken(secret)), []byte(token.Hash)) != 1 {
 		return nil, nil, ErrInvalidToken
 	}
 
@@ -182,9 +183,6 @@ func (s *TokenService) authenticateByHash(ctx context.Context, hash string, user
 	}
 
 	// Validate token state (expiry, OTP requirements)
-	if err := s.IsValidToken(token, checkOTPFlag, false); err != nil {
-		return nil, nil, err
-	}
 	if err := s.IsValidToken(token, checkOTPFlag, false); err != nil {
 		return nil, nil, err
 	}
@@ -297,12 +295,12 @@ func (s *TokenService) VerifyOTP(ctx context.Context, tokenID string, providedOT
 
 	// Verify against primary OTP
 	otpHash := HashOTP(providedOTP)
-	isValid := otpHash == token.OTPHash
+	isValid := subtle.ConstantTimeCompare([]byte(otpHash), []byte(token.OTPHash)) == 1
 
 	// Try fallback OTP if primary doesn't match
 	if !isValid && fallbackOTP != nil {
 		fallbackHash := HashOTP(*fallbackOTP)
-		isValid = fallbackHash == otpHash
+		isValid = subtle.ConstantTimeCompare([]byte(fallbackHash), []byte(token.OTPHash)) == 1
 	}
 
 	if !isValid {

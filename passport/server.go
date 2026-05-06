@@ -158,6 +158,7 @@ func NewServer(
 		compose.OAuth2TokenRevocationFactory,
 		compose.OpenIDConnectExplicitFactory,
 		compose.OAuth2PKCEFactory,
+		compose.OAuth2TokenIntrospectionFactory,
 	)
 
 	srv.provider = provider

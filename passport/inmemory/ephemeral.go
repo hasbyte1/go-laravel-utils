@@ -38,16 +38,14 @@ func (e *ephemeralKV) Set(_ context.Context, key string, value []byte, ttl time.
 }
 
 func (e *ephemeralKV) Get(_ context.Context, key string) ([]byte, error) {
-	e.mu.RLock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	entry, ok := e.entries[key]
-	e.mu.RUnlock()
 	if !ok {
 		return nil, passport.ErrKeyNotFound
 	}
 	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
-		e.mu.Lock()
 		delete(e.entries, key)
-		e.mu.Unlock()
 		return nil, passport.ErrKeyNotFound
 	}
 	v := make([]byte, len(entry.value))

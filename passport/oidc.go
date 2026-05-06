@@ -9,17 +9,21 @@ import (
 	"strings"
 
 	"github.com/ory/fosite"
-	"github.com/ory/fosite/handler/openid"
 )
 
 // HandleUserInfo handles GET /oauth/userinfo.
 func (s *Server) HandleUserInfo() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		sess := &openid.DefaultSession{}
-		_, _, err := s.provider.IntrospectToken(ctx, fosite.AccessTokenFromRequest(r), fosite.AccessToken, sess)
+		sess := newEmptySession()
+		_, ar, err := s.provider.IntrospectToken(ctx, fosite.AccessTokenFromRequest(r), fosite.AccessToken, sess)
 		if err != nil {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		if !ar.GetGrantedScopes().Has("openid") {
+			http.Error(w, `{"error":"insufficient_scope"}`, http.StatusForbidden)
 			return
 		}
 
@@ -30,9 +34,7 @@ func (s *Server) HandleUserInfo() http.Handler {
 			return
 		}
 
-		// IntrospectToken does not expose granted scopes through DefaultSession;
-		// pass empty scopes — the UserInfoProvider may look them up itself.
-		claims, err := s.userInfo.GetUserInfo(ctx, user, []string{})
+		claims, err := s.userInfo.GetUserInfo(ctx, user, ar.GetGrantedScopes())
 		if err != nil {
 			http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
 			return

@@ -535,3 +535,24 @@ func TestTokenService_IsValidToken_MultipleChecks(t *testing.T) {
 		t.Errorf("expected ErrOTPRequired when both checks enabled, got %v", err)
 	}
 }
+
+func TestTokenService_VerifyOTP_FallbackOTP_SucceedsWhenPrimaryWrong(t *testing.T) {
+	svc, _ := newTestService(t, "u1")
+	ctx := context.Background()
+
+	storedOTP := "correct-otp"
+	result, _ := svc.CreateToken(ctx, "u1", sanctum.CreateTokenOptions{
+		Name: "fallback-test",
+		OTP:  &storedOTP,
+	})
+
+	// Primary OTP is wrong; fallback matches the stored OTP.
+	wrong := "wrong-otp"
+	verified, err := svc.VerifyOTP(ctx, result.Token.ID, wrong, &storedOTP, nil)
+	if err != nil {
+		t.Fatalf("VerifyOTP with correct fallback: %v", err)
+	}
+	if verified.OTPHash != "" {
+		t.Error("OTPHash should be cleared after successful fallback verification")
+	}
+}
