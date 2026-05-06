@@ -2,6 +2,7 @@ package sanctum
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -66,6 +67,30 @@ func WithSessionAuthenticator(sa SessionAuthenticator) GuardOption {
 	}
 }
 
+// WithTrustedProxyCIDRs registers CIDR ranges that identify trusted reverse
+// proxies. When set, X-Forwarded-For is only consulted for requests whose
+// direct TCP connection originates from one of these ranges. All other requests
+// use RemoteAddr as the authoritative client IP.
+//
+// Without this option, X-Forwarded-For is ignored entirely and RemoteAddr is
+// always used, preventing IP spoofing by clients who inject forged XFF headers.
+//
+// Example:
+//
+//	guard := sanctum.NewGuard(svc, csrf,
+//	    sanctum.WithTrustedProxyCIDRs("10.0.0.0/8", "172.16.0.0/12"),
+//	)
+func WithTrustedProxyCIDRs(cidrs ...string) GuardOption {
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, ipNet, err := net.ParseCIDR(c)
+		if err == nil {
+			nets = append(nets, ipNet)
+		}
+	}
+	return func(g *Guard) { g.trustedNets = nets }
+}
+
 // Guard is the main authentication entry-point. On each request it tries Bearer
 // token authentication first, then falls back to session authentication (if a
 // [SessionAuthenticator] is configured).
@@ -76,6 +101,7 @@ type Guard struct {
 	validators  []TokenValidator
 	listeners   []EventListener
 	sessionAuth SessionAuthenticator
+	trustedNets []*net.IPNet // trusted reverse-proxy CIDRs for XFF resolution
 }
 
 // NewGuard constructs a Guard with the given service, CSRF service, and options.
@@ -177,8 +203,7 @@ func (g *Guard) AuthenticateBearer(ctx context.Context, bearerToken string, ip *
 }
 
 func (g *Guard) authenticateBearer(r *http.Request, plainText string, checkOTP ...bool) (*AuthContext, error) {
-	// Extract the user's IP address from the request
-	ip := extractIPAddress(r)
+	ip := extractIPAddress(r, g.trustedNets)
 
 	user, token, err := g.service.AuthenticateToken(r.Context(), plainText, ip, checkOTP...)
 	if err != nil {
@@ -239,34 +264,53 @@ func extractBearerToken(r *http.Request) string {
 	return ""
 }
 
-// extractIPAddress extracts the client's IP address from the HTTP request.
-// It checks for X-Forwarded-For and X-Real-IP headers (common in proxied environments)
-// before falling back to RemoteAddr. Returns a pointer to the IP address string,
-// or nil if the address cannot be determined.
-func extractIPAddress(r *http.Request) *string {
-	// Check X-Forwarded-For header (comma-separated list of IPs in reverse order)
+// extractIPAddress returns the authoritative client IP for this request.
+//
+// When trustedNets is empty (the default), X-Forwarded-For is ignored and the
+// IP is taken directly from RemoteAddr. This is the safe default: clients that
+// connect directly can forge any XFF value, so trusting it without knowing the
+// request came through a verified proxy would allow IP spoofing.
+//
+// When trustedNets is non-empty and the direct connection (RemoteAddr) is within
+// a trusted range, X-Forwarded-For is consulted. The list is walked right-to-left
+// (per RFC 7239 §5.3); the first entry that is NOT in a trusted range is the
+// real client IP. If all XFF entries are trusted (or XFF is absent), RemoteAddr
+// is returned.
+func extractIPAddress(r *http.Request, trustedNets []*net.IPNet) *string {
+	remoteHost := remoteAddrHost(r.RemoteAddr)
+	if len(trustedNets) == 0 || !isInNets(net.ParseIP(remoteHost), trustedNets) {
+		return ptrString(remoteHost)
+	}
+	// Direct connection is from a trusted proxy — walk XFF right-to-left.
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Get the first IP if multiple are present
-		if idx := strings.Index(xff, ","); idx > 0 {
-			return ptrString(strings.TrimSpace(xff[:idx]))
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			ip := net.ParseIP(strings.TrimSpace(parts[i]))
+			if ip != nil && !isInNets(ip, trustedNets) {
+				return ptrString(ip.String())
+			}
 		}
-		return ptrString(strings.TrimSpace(xff))
 	}
+	return ptrString(remoteHost)
+}
 
-	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return ptrString(xri)
+func remoteAddrHost(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
 	}
+	return addr
+}
 
-	// Fall back to RemoteAddr (host:port format)
-	if r.RemoteAddr != "" {
-		if idx := strings.LastIndex(r.RemoteAddr, ":"); idx > 0 {
-			return ptrString(r.RemoteAddr[:idx])
+func isInNets(ip net.IP, nets []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
 		}
-		return ptrString(r.RemoteAddr)
 	}
-
-	return nil
+	return false
 }
 
 // ptrString returns a pointer to a string.

@@ -67,9 +67,23 @@ func WithCacheTTL(d time.Duration) ResourceGuardOption {
 	return func(g *ResourceGuard) { g.cacheTTL = d }
 }
 
+// WithAudience sets the expected audience for this resource server. When set,
+// every incoming JWT must carry a matching aud claim (string or array). Tokens
+// without an aud claim, or with an aud that does not include the expected value,
+// are rejected with ErrInvalidToken.
+//
+// Strongly recommended for multi-service deployments where multiple resource
+// servers share the same authorization server — without this, a valid token
+// issued for one service can be replayed against any other service from the
+// same issuer.
+func WithAudience(aud string) ResourceGuardOption {
+	return func(g *ResourceGuard) { g.audience = aud }
+}
+
 // ResourceGuard validates JWT access tokens issued by a passport Server.
 type ResourceGuard struct {
 	issuer     string
+	audience   string           // optional; when non-empty, aud claim is validated
 	staticKey  crypto.PublicKey // non-nil for static-key mode
 	jwksURL    string           // non-empty for remote-JWKS mode
 	httpClient *http.Client
@@ -84,12 +98,16 @@ type ResourceGuard struct {
 // NewResourceGuard validates tokens using a static public key.
 // Use when the resource server and auth server share the same process or the key
 // is loaded from disk at startup.
-func NewResourceGuard(issuer string, key crypto.PublicKey) *ResourceGuard {
-	return &ResourceGuard{
+func NewResourceGuard(issuer string, key crypto.PublicKey, opts ...ResourceGuardOption) *ResourceGuard {
+	g := &ResourceGuard{
 		issuer:    issuer,
 		staticKey: key,
 		cacheTTL:  time.Hour,
 	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // NewRemoteResourceGuard fetches and caches the JWKS from jwksURL.
@@ -173,7 +191,7 @@ func (g *ResourceGuard) validateJWT(ctx context.Context, token string) (*TokenCl
 		return nil, ErrInvalidToken
 	}
 
-	return mapToClaims(payload, g.issuer)
+	return mapToClaims(payload, g.issuer, g.audience)
 }
 
 func (g *ResourceGuard) resolveKey(ctx context.Context, kid string) (crypto.PublicKey, error) {
@@ -281,10 +299,15 @@ func verifyRS256(signingInput, sig string, key crypto.PublicKey) error {
 	return rsa.VerifyPKCS1v15(pub, crypto.SHA256, h[:], sigBytes)
 }
 
-func mapToClaims(payload map[string]any, expectedIssuer string) (*TokenClaims, error) {
+func mapToClaims(payload map[string]any, expectedIssuer, expectedAudience string) (*TokenClaims, error) {
 	iss, _ := payload["iss"].(string)
 	if iss != expectedIssuer {
 		return nil, fmt.Errorf("%w: issuer %q does not match expected %q", ErrInvalidToken, iss, expectedIssuer)
+	}
+	if expectedAudience != "" {
+		if err := validateAudience(payload["aud"], expectedAudience); err != nil {
+			return nil, err
+		}
 	}
 	expF, hasExp := payload["exp"].(float64)
 	if !hasExp {
@@ -322,6 +345,25 @@ func mapToClaims(payload map[string]any, expectedIssuer string) (*TokenClaims, e
 		ExpiresAt: exp,
 		Extra:     extra,
 	}, nil
+}
+
+// validateAudience checks that audClaim (the raw JWT aud value) contains expected.
+// The aud claim may be a JSON string or a JSON array; both forms are handled.
+// Returns ErrInvalidToken when the claim is absent or does not contain expected.
+func validateAudience(audClaim any, expected string) error {
+	switch v := audClaim.(type) {
+	case string:
+		if v == expected {
+			return nil
+		}
+	case []any:
+		for _, elem := range v {
+			if s, ok := elem.(string); ok && s == expected {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("%w: audience claim does not match %q", ErrInvalidToken, expected)
 }
 
 func extractBearer(r *http.Request) string {

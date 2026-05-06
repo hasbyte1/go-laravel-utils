@@ -468,7 +468,12 @@ func (fc *fositeClient) GetResponseTypes() fosite.Arguments {
 }
 func (fc *fositeClient) GetScopes() fosite.Arguments        { return fc.c.Scopes }
 func (fc *fositeClient) IsPublic() bool                     { return fc.c.Public }
-func (fc *fositeClient) GetAudience() fosite.Arguments      { return fosite.Arguments{} }
+func (fc *fositeClient) GetAudience() fosite.Arguments {
+	if len(fc.c.Audience) > 0 {
+		return fosite.Arguments(fc.c.Audience)
+	}
+	return fosite.Arguments{}
+}
 
 // -----------------------------------------------------------------------
 // session helpers

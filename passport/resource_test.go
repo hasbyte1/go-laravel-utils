@@ -175,3 +175,163 @@ func TestClaimsFromContext_nil(t *testing.T) {
 		t.Fatal("expected nil claims from empty context")
 	}
 }
+
+// makeTestJWTWithAudience builds a signed JWT that includes an aud claim.
+// Single-element audience is encoded as a JSON string; multi-element as an array.
+func makeTestJWTWithAudience(t *testing.T, key *rsa.PrivateKey, issuer, subject string, exp time.Time, scopes, audience []string) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","kid":"default","typ":"JWT"}`))
+	p := map[string]any{
+		"iss": issuer,
+		"sub": subject,
+		"exp": exp.Unix(),
+		"iat": time.Now().Unix(),
+		"scp": strings.Join(scopes, " "),
+	}
+	switch len(audience) {
+	case 1:
+		p["aud"] = audience[0]
+	default:
+		p["aud"] = audience
+	}
+	payloadBytes, _ := json.Marshal(p)
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadBytes)
+	sigInput := header + "." + payloadB64
+	h := sha256.Sum256([]byte(sigInput))
+	sig, _ := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, h[:])
+	return sigInput + "." + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+// --- Audience validation tests ---
+
+func TestResourceGuard_WithAudience_AcceptsMatchingAudience(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	guard := passport.NewResourceGuard("https://auth.example.com", &key.PublicKey,
+		passport.WithAudience("https://api.example.com"))
+
+	token := makeTestJWTWithAudience(t, key, "https://auth.example.com", "user-1",
+		time.Now().Add(time.Hour), []string{"read"}, []string{"https://api.example.com"})
+
+	r, _ := http.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+
+	claims, err := guard.Authenticate(r)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if claims.Subject != "user-1" {
+		t.Fatalf("wrong subject: %s", claims.Subject)
+	}
+}
+
+func TestResourceGuard_WithAudience_RejectsWrongAudience(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	guard := passport.NewResourceGuard("https://auth.example.com", &key.PublicKey,
+		passport.WithAudience("https://api.example.com"))
+
+	token := makeTestJWTWithAudience(t, key, "https://auth.example.com", "user-1",
+		time.Now().Add(time.Hour), []string{"read"}, []string{"https://other.example.com"})
+
+	r, _ := http.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+
+	_, err := guard.Authenticate(r)
+	if !errors.Is(err, passport.ErrInvalidToken) {
+		t.Fatalf("got %v, want ErrInvalidToken", err)
+	}
+}
+
+func TestResourceGuard_WithAudience_RejectsTokenWithoutAudClaim(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	guard := passport.NewResourceGuard("https://auth.example.com", &key.PublicKey,
+		passport.WithAudience("https://api.example.com"))
+
+	// makeTestJWT builds tokens without an aud claim.
+	token := makeTestJWT(t, key, "https://auth.example.com", "user-1",
+		time.Now().Add(time.Hour), []string{"read"})
+
+	r, _ := http.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+
+	_, err := guard.Authenticate(r)
+	if !errors.Is(err, passport.ErrInvalidToken) {
+		t.Fatalf("got %v, want ErrInvalidToken", err)
+	}
+}
+
+func TestResourceGuard_WithAudience_AcceptsArrayAudContainingExpected(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	guard := passport.NewResourceGuard("https://auth.example.com", &key.PublicKey,
+		passport.WithAudience("https://api.example.com"))
+
+	token := makeTestJWTWithAudience(t, key, "https://auth.example.com", "user-1",
+		time.Now().Add(time.Hour), []string{"read"},
+		[]string{"https://api.example.com", "https://other.example.com"})
+
+	r, _ := http.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+
+	_, err := guard.Authenticate(r)
+	if err != nil {
+		t.Fatalf("should accept array aud containing expected audience: %v", err)
+	}
+}
+
+func TestResourceGuard_WithAudience_RejectsArrayAudWithNoMatch(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	guard := passport.NewResourceGuard("https://auth.example.com", &key.PublicKey,
+		passport.WithAudience("https://api.example.com"))
+
+	token := makeTestJWTWithAudience(t, key, "https://auth.example.com", "user-1",
+		time.Now().Add(time.Hour), []string{"read"},
+		[]string{"https://payments.example.com", "https://other.example.com"})
+
+	r, _ := http.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+
+	_, err := guard.Authenticate(r)
+	if !errors.Is(err, passport.ErrInvalidToken) {
+		t.Fatalf("got %v, want ErrInvalidToken for non-matching array aud", err)
+	}
+}
+
+// Cross-service token confusion: token minted for service A (payments) must be
+// rejected by service B's guard (admin), even though both share the same issuer.
+func TestResourceGuard_CrossServiceTokenConfusion_IsRejected(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+
+	guardAdmin := passport.NewResourceGuard("https://auth.example.com", &key.PublicKey,
+		passport.WithAudience("https://admin.example.com"))
+
+	tokenForPayments := makeTestJWTWithAudience(t, key, "https://auth.example.com", "attacker",
+		time.Now().Add(time.Hour), []string{"read", "write"},
+		[]string{"https://payments.example.com"})
+
+	r, _ := http.NewRequest("GET", "/admin/users", nil)
+	r.Header.Set("Authorization", "Bearer "+tokenForPayments)
+
+	_, err := guardAdmin.Authenticate(r)
+	if !errors.Is(err, passport.ErrInvalidToken) {
+		t.Fatalf("cross-service token should be rejected: got %v, want ErrInvalidToken", err)
+	}
+}
+
+// Without WithAudience option, tokens without an aud claim remain accepted (backward compat).
+func TestResourceGuard_NoAudienceOption_BackwardCompatAcceptsTokenWithoutAud(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	guard := passport.NewResourceGuard("https://auth.example.com", &key.PublicKey)
+
+	token := makeTestJWT(t, key, "https://auth.example.com", "user-1",
+		time.Now().Add(time.Hour), []string{"read"})
+
+	r, _ := http.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+
+	claims, err := guard.Authenticate(r)
+	if err != nil {
+		t.Fatalf("backward compat: %v", err)
+	}
+	if claims.Subject != "user-1" {
+		t.Fatalf("wrong subject: %s", claims.Subject)
+	}
+}

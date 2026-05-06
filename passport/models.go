@@ -39,6 +39,12 @@ type OAuthClient struct {
 	// Callers may use this field in their ConsentProvider to auto-grant consent
 	// without showing a consent screen.
 	FirstParty bool
+
+	// Audience lists the resource servers this client's tokens are intended for.
+	// e.g. []string{"https://api.example.com"}. When non-empty, fosite embeds
+	// the audience in issued JWT access tokens, enabling resource servers
+	// configured with WithAudience to reject cross-service token reuse.
+	Audience []string
 }
 
 // AuthorizationCode represents a stored authorization code.

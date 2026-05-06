@@ -311,3 +311,113 @@ func TestGuard_AuthenticateBearer_WithoutIP(t *testing.T) {
 		t.Errorf("user ID = %q, want %q", user.GetID(), "u2")
 	}
 }
+
+// --- IP extraction / trusted proxy tests ---
+
+// newTestGuardWithRepo creates a Guard and returns the underlying in-memory repo so
+// tests can inspect what IP was stored after authentication.
+func newTestGuardWithRepo(t testing.TB, opts ...sanctum.GuardOption) (*sanctum.Guard, *sanctum.TokenService, *inmemory.Repository) {
+	t.Helper()
+	repo := inmemory.New()
+	users := inmemory.NewUserStore()
+	users.Add(&testUser{id: "u1"})
+	svc := sanctum.NewTokenService(repo, users, sanctum.DefaultConfig())
+	csrf := sanctum.NewCSRFService(sanctum.DefaultConfig())
+	g := sanctum.NewGuard(svc, csrf, opts...)
+	return g, svc, repo
+}
+
+// Without trusted proxies, XFF header must be ignored; RemoteAddr is the source of truth.
+// This prevents clients from spoofing their IP to bypass IP-based TokenValidators.
+func TestGuard_IPExtraction_IgnoresXFFWithoutTrustedProxies(t *testing.T) {
+	g, svc, repo := newTestGuardWithRepo(t) // no WithTrustedProxyCIDRs
+
+	result, _ := svc.CreateToken(context.Background(), "u1", sanctum.CreateTokenOptions{})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer "+result.PlainText)
+	r.Header.Set("X-Forwarded-For", "1.2.3.4") // attacker-supplied
+	r.RemoteAddr = "192.0.2.1:9999"
+
+	_, err := g.Authenticate(r)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	tok, err := repo.FindByID(context.Background(), result.Token.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if tok.UserIP == nil {
+		t.Fatal("UserIP should be set after authentication")
+	}
+	if *tok.UserIP == "1.2.3.4" {
+		t.Error("XFF header should not be trusted when no trusted proxies are configured; stored IP should come from RemoteAddr")
+	}
+	if *tok.UserIP != "192.0.2.1" {
+		t.Errorf("expected stored IP = 192.0.2.1 (from RemoteAddr), got %s", *tok.UserIP)
+	}
+}
+
+// When the direct connection comes from a trusted proxy CIDR, XFF should be
+// consulted and the rightmost non-trusted IP is the real client.
+func TestGuard_IPExtraction_UsesXFFFromTrustedProxy(t *testing.T) {
+	g, svc, repo := newTestGuardWithRepo(t,
+		sanctum.WithTrustedProxyCIDRs("10.0.0.0/8"))
+
+	result, _ := svc.CreateToken(context.Background(), "u1", sanctum.CreateTokenOptions{})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer "+result.PlainText)
+	r.Header.Set("X-Forwarded-For", "5.6.7.8") // real client IP appended by proxy
+	r.RemoteAddr = "10.0.0.1:1234"              // trusted proxy
+
+	_, err := g.Authenticate(r)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	tok, err := repo.FindByID(context.Background(), result.Token.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if tok.UserIP == nil {
+		t.Fatal("UserIP should be set")
+	}
+	if *tok.UserIP != "5.6.7.8" {
+		t.Errorf("expected stored IP = 5.6.7.8 (from XFF via trusted proxy), got %s", *tok.UserIP)
+	}
+}
+
+// Even with trusted proxies configured, a spoofed XFF from a non-trusted remote
+// must not be honoured — the direct connection IP (RemoteAddr) is used instead.
+func TestGuard_IPExtraction_IgnoresSpoofedXFFFromUntrustedRemote(t *testing.T) {
+	g, svc, repo := newTestGuardWithRepo(t,
+		sanctum.WithTrustedProxyCIDRs("10.0.0.0/8"))
+
+	result, _ := svc.CreateToken(context.Background(), "u1", sanctum.CreateTokenOptions{})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer "+result.PlainText)
+	r.Header.Set("X-Forwarded-For", "1.2.3.4") // attacker-injected
+	r.RemoteAddr = "203.0.113.5:4321"           // not in 10.0.0.0/8
+
+	_, err := g.Authenticate(r)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+
+	tok, err := repo.FindByID(context.Background(), result.Token.ID)
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if tok.UserIP == nil {
+		t.Fatal("UserIP should be set")
+	}
+	if *tok.UserIP == "1.2.3.4" {
+		t.Error("spoofed XFF from untrusted remote must not be stored as client IP")
+	}
+	if *tok.UserIP != "203.0.113.5" {
+		t.Errorf("expected stored IP = 203.0.113.5 (RemoteAddr), got %s", *tok.UserIP)
+	}
+}

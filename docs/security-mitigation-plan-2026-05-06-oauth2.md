@@ -162,14 +162,14 @@ Add a prominent warning to `WithTokenValidator` and `Token.UserIP` that the IP v
 
 | ID | Severity | File | Task | Status |
 |----|----------|------|------|--------|
-| AUD-1 | HIGH | `passport/models.go` | Add `Audience` to `OAuthClient` | ☐ Open |
-| AUD-2 | HIGH | `passport/adapter.go` | Implement `GetAudience()` | ☐ Open |
-| AUD-3 | HIGH | `passport/resource.go` | Add `WithAudience` option | ☐ Open |
-| AUD-4 | HIGH | `passport/resource.go` | Validate `aud` in `mapToClaims` | ☐ Open |
-| AUD-5 | HIGH | `passport/errors.go` | Add `ErrAudienceMismatch` | ☐ Open |
-| AUD-6 | HIGH | `passport/*_test.go` | Audience validation tests | ☐ Open |
-| XFF-1 | MEDIUM | `sanctum/config.go` | Add `TrustedProxyCIDRs` field | ☐ Open |
-| XFF-2 | MEDIUM | `sanctum/guard.go` | Parse CIDRs at `NewGuard` | ☐ Open |
-| XFF-3 | MEDIUM | `sanctum/guard.go` | Rewrite `extractIPAddress` | ☐ Open |
-| XFF-4 | MEDIUM | `sanctum/guard.go` | Update godoc warnings | ☐ Open |
-| XFF-5 | MEDIUM | `sanctum/*_test.go` | Trusted proxy tests | ☐ Open |
+| AUD-1 | HIGH | `passport/models.go` | Add `Audience` to `OAuthClient` | ✅ Done |
+| AUD-2 | HIGH | `passport/adapter.go` | Implement `GetAudience()` | ✅ Done |
+| AUD-3 | HIGH | `passport/resource.go` | Add `WithAudience` option | ✅ Done |
+| AUD-4 | HIGH | `passport/resource.go` | Validate `aud` in `mapToClaims` | ✅ Done |
+| AUD-5 | HIGH | `passport/errors.go` | Add `ErrAudienceMismatch` | N/A — uses `ErrInvalidToken` wrapping |
+| AUD-6 | HIGH | `passport/resource_test.go` | Audience validation tests (7 tests) | ✅ Done |
+| XFF-1 | MEDIUM | `sanctum/guard.go` | `WithTrustedProxyCIDRs` GuardOption | ✅ Done |
+| XFF-2 | MEDIUM | `sanctum/guard.go` | Parse CIDRs at `NewGuard` | ✅ Done |
+| XFF-3 | MEDIUM | `sanctum/guard.go` | Rewrite `extractIPAddress` | ✅ Done |
+| XFF-4 | MEDIUM | `sanctum/guard.go` | Update godoc + warning comments | ✅ Done |
+| XFF-5 | MEDIUM | `sanctum/guard_test.go` | Trusted proxy tests (3 tests) | ✅ Done |
